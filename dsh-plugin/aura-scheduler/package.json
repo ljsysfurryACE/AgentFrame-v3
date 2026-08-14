@@ -1,0 +1,22 @@
+{
+  "name": "@agentframe/dsh-aura-scheduler",
+  "version": "0.1.0",
+  "description": "Proactive scheduling for DeepSeek Harness: Aura heartbeat + value network decides when the agent should speak unprompted (official harness is model-driven only)",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "license": "GPL-3.0",
+  "keywords": ["deepseek", "harness", "dsh", "dsh-plugin", "aura", "proactive", "scheduler", "agent"],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "tsx tests/smoke.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0"
+  },
+  "files": ["lib", "src", "README.md"],
+  "publishConfig": { "access": "public" }
+}
