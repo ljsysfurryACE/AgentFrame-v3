@@ -1,0 +1,23 @@
+{
+  "name": "@agentframe/dsh-memory-director",
+  "version": "0.1.0",
+  "description": "MemoryDirector plugin for DeepSeek Harness: LLM-driven remember/forget across turns (the official harness has no memory concept)",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "license": "GPL-3.0",
+  "keywords": ["deepseek", "harness", "dsh", "dsh-plugin", "memory", "agent", "director"],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/dsh-agent": ">=0.1.0"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "tsx tests/smoke.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0"
+  },
+  "files": ["lib", "src", "README.md"],
+  "publishConfig": { "access": "public" }
+}

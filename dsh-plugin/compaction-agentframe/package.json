@@ -1,20 +1,41 @@
 {
-  "name": "@deepseek-ai/dsh-compaction-agentframe",
+  "name": "@agentframe/dsh-compaction",
   "version": "0.1.0",
-  "description": "AgentFrame compaction backend: semantic + physical KV compression (35.6x) replacing LLM summarization",
+  "description": "AgentFrame compaction backend for DeepSeek Harness: semantic + physical KV compression (35.6x) replacing LLM summarization",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "license": "GPL-3.0",
-  "dependencies": {
-    "@deepseek-ai/cordis": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:*",
-    "@deepseek-ai/dsh-compaction": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-agent": "workspace:*"
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "compaction",
+    "kv-cache",
+    "agent",
+    "memory"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/dsh-compaction": ">=0.1.0",
+    "@deepseek-ai/dsh-session": ">=0.1.0",
+    "@deepseek-ai/dsh-llm": ">=0.1.0",
+    "@deepseek-ai/dsh-agent": ">=0.1.0"
   },
-  "exports": {
-    ".": "./lib/index.js",
-    "./package.json": "./package.json"
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "tsx tests/smoke.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0"
+  },
+  "files": [
+    "lib",
+    "src",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }
