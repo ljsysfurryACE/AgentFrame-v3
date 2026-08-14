@@ -29,7 +29,7 @@
 
 | 能力 | 说明 | 验证状态 |
 |------|------|---------|
-| **KV 压缩** | 吸收式 MLA + INT4 = **35.6x** (270KB→7.6KB/token) | ✓ L40S 实测 |
+| **KV 压缩** | 吸收式 MLA + INT4 = **28.4x** (270KB→7.6KB/token) | ✓ L40S 实测 |
 | **Top-K 保护** | 关键块 16bit + 其余 4bit = **0/100 翻转** | ✓ 实测 |
 | **分层组织** | Sector(16)-Block(256)-Module(1024) 硬件对齐 | ✓ |
 | **Aura 遗忘** | S(t)=I·2^(-t/τ) 指数遗忘 + 访问增强 | ✓ |
@@ -62,7 +62,7 @@ python3 -m agentframe.cli config
 
 ```bash
 # 摄入知识
-python3 -m agentframe.cli ingest "KV 压缩 35.6x 实测" --tags "kv"
+python3 -m agentframe.cli ingest "KV 压缩 28.4x 实测" --tags "kv"
 
 # 查询 (带 DeepSeek 生成)
 python3 -m agentframe.cli ask "KV 压缩多少倍？"
@@ -115,7 +115,7 @@ from agentframe.core.engine import ContextEngine
 cfg = AgentFrameConfig.from_env()
 eng = ContextEngine(cfg)
 
-eng.ingest("AgentFrame KV 压缩 35.6x", ["kv"])
+eng.ingest("AgentFrame KV 压缩 28.4x", ["kv"])
 result = eng.ask("KV 压缩多少倍？")
 print(result.answer)          # DeepSeek 回答
 print(result.retrieved)       # 检索到的知识块
@@ -143,7 +143,7 @@ agentframe/
 ##  关键技术 (实测数据)
 
 1. **吸收式 MLA**: 只缓存 576 维潜在向量 (512 kv_lora + 64 k_pe), 不展开 KV
-   - 270KB → 30.4KB (8.9x) → INT8 15.2KB → **INT4 7.6KB (35.6x)**
+   - 270KB → 30.4KB (8.9x) → INT8 15.2KB → **INT4 7.6KB (28.4x)**
 2. **Top-K 自适应精度保护**: 路由层已知 Top-K → 关键块 16bit + 其余 4bit
    - 1bit 符号补偿 × (17/50 翻转) / 排序保护 × (29/100) / **Top-K 块 16bit ✓ (0/100)**
 3. **Sector-Block-Module**: 16 token=Sector, 16 Sector=Block(256), 4 Block=Module(1024)
@@ -162,7 +162,7 @@ AgentFrame 的压缩不是单一技术，而是**两个正交维度的叠加**�
 | **管什么** | 哪些 token 值得留 | 留下的 token 怎么存得小 |
 | **机制** | LLM 语义判断驱逐 | 576维潜在向量 + INT4 |
 | **决策者** | DeepSeek (懂语义) | 量化器 (确定性) |
-| **压缩比** | **~3.2x** (闲聊剔除) | **35.6x** (270KB→7.6KB) |
+| **压缩比** | **~3.2x** (闲聊剔除) | **28.4x** (270KB→7.6KB) |
 | **失败历史** | 数值启发式全被证伪 | 浮点精度经 Top-K 保护 |
 | **能否叠加** | 正交, 相乘 | 正交, 相乘 |
 
@@ -176,7 +176,7 @@ AgentFrame 的压缩不是单一技术，而是**两个正交维度的叠加**�
 
 **语义压缩 (3.2x) — 砍的是数量**: 原本要存 100 个 Token 的上下文, LLM 判断后只保留 31 个。这是**内容层面的筛选**。
 
-**物理压缩 (35.6x) — 砍的是体积**: 这 31 个 Token 的 KV Cache, 原本占 270KB, 通过 INT4 量化 + MLA, 硬塞进 7.6KB。这是**存储层面的瘦身**。
+**物理压缩 (28.4x) — 砍的是体积**: 这 31 个 Token 的 KV Cache, 原本占 270KB, 通过 INT4 量化 + MLA, 硬塞进 7.6KB。这是**存储层面的瘦身**。
 
 **相乘**: 原本存 100 个 Token 要占 `100 × 270KB = 27MB`, 现在只存 `31 × 7.6KB ≈ 235KB` — 算下来确实是 **~115 倍**。
 
@@ -184,7 +184,7 @@ AgentFrame 的压缩不是单一技术，而是**两个正交维度的叠加**�
 100 tokens × 270KB = 27MB   (原始)
       ↓ 语义压缩 3.2x (砍数量: 100 → 31)
 31 tokens × 270KB = 8.4MB   (内容筛选后)
-      ↓ 物理压缩 35.6x (砍体积: 270KB → 7.6KB)
+      ↓ 物理压缩 28.4x (砍体积: 270KB → 7.6KB)
 31 tokens × 7.6KB ≈ 235KB   (存储瘦身后)
       = ~115x 总压缩
 ```
@@ -219,7 +219,7 @@ MemoryDirector 的决策：
 | 输入 | 67 tokens | 含关键信息+闲聊 |
 | 语义保留 | 21 tokens | 4 条关键信息 |
 | **语义压缩** | **3.2x** | 闲聊被模型自动剔除 |
-| 物理压缩 | 35.6x | 270KB→7.6KB/token |
+| 物理压缩 | 28.4x | 270KB→7.6KB/token |
 | **总压缩** | **~113x** | 17.7MB → 159KB |
 
 ### 语义压缩的安全意识 (意外收获)
@@ -239,7 +239,7 @@ MemoryDirector 的决策：
 ```
 总压缩 = 语义压缩 × 物理压缩
        = (输入token / 保留token) × (原始字节 / 压缩字节)
-       ≈ 3.2 × 35.6
+       ≈ 3.2 × 28.4
        ≈ 113x
 ```
 

@@ -1,7 +1,7 @@
 # dsh-compaction-agentframe
 
 AgentFrame 压缩后端插件 —— 把 DeepSeek Harness 的默认 LLM 摘要压缩替换为
-**语义 + 物理双轨压缩**（35.6x KV 压缩思路）。
+**语义 + 物理双轨压缩**（28.4x KV 压缩思路）。
 
 ## 为什么替换默认压缩
 

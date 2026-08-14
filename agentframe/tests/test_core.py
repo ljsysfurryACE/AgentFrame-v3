@@ -18,7 +18,7 @@ def make_engine() -> ContextEngine:
 
 def test_ingest_and_retrieve():
     eng = make_engine()
-    eng.ingest("KV 缓存压缩 35.6x 实测", ["kv"])
+    eng.ingest("KV 缓存压缩 28.4x 实测", ["kv"])
     eng.ingest("注意力分数不等于任务重要性", ["agent"])
     eng.ingest("Minecraft 1.20.4 逆向完成", ["mc"])
     assert len(eng.agent.chunk_meta) == 3

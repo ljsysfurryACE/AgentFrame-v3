@@ -5,7 +5,7 @@ ContextEngine — AgentFrame 核心引擎
 
   L1 MetaCog       认知层: 任务分解 / 信息缺口 / 检索指令
   L2 LandmarkRouter 路由层: landmark 摘要检索 top-k
-  L3 AbsorbedMLA   存储层: 吸收式 MLA 压缩 (35.6x)
+  L3 AbsorbedMLA   存储层: 吸收式 MLA 压缩 (28.4x)
   L4 KVPager       物理层: 三级换页 + Aura 遗忘曲线
 
 对外接口 (引擎级, 与 API/CLI 解耦):
@@ -365,7 +365,7 @@ class ContextEngine:
             "bytes_per_token": round(self.agent.store.bytes_per_token(), 2),
             "chat_history_turns": len(self.chat_history) // 2,
             "now": self.now,
-            "compression": "吸收式MLA + INT4 = 35.6x (L40S 实测)",
+            "compression": "吸收式MLA + INT4 = 28.4x (L40S 实测)",
         }
 
     def save(self, path: str):

@@ -1,7 +1,7 @@
 {
   "name": "@agentframe/dsh-compaction",
   "version": "0.1.0",
-  "description": "AgentFrame compaction backend for DeepSeek Harness: semantic + physical KV compression (35.6x) replacing LLM summarization",
+  "description": "AgentFrame compaction backend for DeepSeek Harness: semantic + physical KV compression (28.4x) replacing LLM summarization",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "license": "GPL-3.0",

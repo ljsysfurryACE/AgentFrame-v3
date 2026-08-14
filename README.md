@@ -36,7 +36,7 @@ DeepSeek Harness (dsh)                    AgentFrame (先明)
 │  ctx.compaction (seam)   │ ← 替换 →     │ compaction-agentframe │
 │  compaction-basic (默认) │              │  语义轨: MemoryDirector│
 │  LLM 摘要压缩            │              │  物理轨: MLA+INT4     │
-│  surface/事件/持久化     │  保持契约     │  35.6x KV 压缩        │
+│  surface/事件/持久化     │  保持契约     │  28.4x KV 压缩        │
 └─────────────────────────┘              └──────────────────────┘
 ```
 
@@ -89,7 +89,7 @@ DeepSeek Harness (dsh)                    AgentFrame (先明)
 
 | 能力 | 说明 | 验证 |
 |------|------|------|
-| **KV 压缩** | 吸收式 MLA + INT4 = **35.6x** |  L40S 实测 |
+| **KV 压缩** | 吸收式 MLA + INT4 = **28.4x** |  L40S 实测 |
 | **语义蒸馏** | MemoryDirector 3.2x (67→21 tokens) |  API 实测 |
 | **总压缩** | ~113x (27MB → 235KB) |  |
 | **Top-K 保护** | 关键块 16bit + 其余 4bit = 0/100 翻转 |  |

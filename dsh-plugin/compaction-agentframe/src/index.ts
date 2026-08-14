@@ -4,7 +4,7 @@
  * Replaces the default LLM-summarization compaction with AgentFrame's
  * dual-track compression:
  *   1. Semantic track (MemoryDirector): decide which tokens matter
- *   2. Physical track (AbsorbedMLA + INT4): 35.6x KV compression
+ *   2. Physical track (AbsorbedMLA + INT4): 28.4x KV compression
  *
  * @module @deepseek-ai/dsh-compaction-agentframe
  */

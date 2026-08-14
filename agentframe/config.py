@@ -21,7 +21,7 @@ class LLMConfig:
 class MemoryConfig:
     """上下文保持核心配置"""
     n_layers: int = 27                      # 模型层数 (DeepSeek-V2 27 层)
-    quant_bits: int = 4                     # 量化位宽 (4 = INT4, 35.6x)
+    quant_bits: int = 4                     # 量化位宽 (4 = INT4, 28.4x)
     top_k: int = 32                         # 路由检索 top-k
     vram_limit_mb: int = 10240              # 显存层上限
     ram_limit_mb: int = 32768               # 内存层上限

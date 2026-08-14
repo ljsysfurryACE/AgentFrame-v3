@@ -105,7 +105,7 @@ def cmd_demo(args):
     chunks = [
         {"text": "KV 缓存 270KB/token 展开存储", "tags": ["data"]},
         {"text": "吸收式 MLA 缓存 576 维潜在向量", "tags": ["method"]},
-        {"text": "L40S 实测 35.6x 压缩", "tags": ["data", "result"]},
+        {"text": "L40S 实测 28.4x 压缩", "tags": ["data", "result"]},
         {"text": "注意力分数不等于任务重要性", "tags": ["agent"]},
     ]
     for c in chunks:

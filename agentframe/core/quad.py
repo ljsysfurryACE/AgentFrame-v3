@@ -9,7 +9,7 @@ AgentFrame 四层融合实现
 层:
   L1 MetaCog      — 认知层: 任务分解/置信度/信息缺口
   L2 LandmarkRouter — 路由层: landmark 摘要 + 分层软max + Q-Cal
-  L3 AbsorbedMLA  — 存储层: 吸收式 MLA + 分层量化 (35.6×)
+  L3 AbsorbedMLA  — 存储层: 吸收式 MLA + 分层量化 (28.4×)
   L4 KVPager      — 物理层: 热/温/冷三级换页 + 预测性驱逐
 """
 import numpy as np
@@ -204,7 +204,7 @@ class ReversibleQuantizer:
 class AbsorbedMLA:
     """
     吸收式 MLA: 只缓存 576 维潜在向量, 不展开 KV
-    270KB → 30.4KB (8.9×) → INT8 15.2KB → INT4 7.6KB (35.6×)
+    270KB → 30.4KB (8.9×) → INT8 15.2KB → INT4 7.6KB (28.4×)
     """
     KV_LORA_RANK = 512
     K_ROPE = 64
@@ -669,7 +669,7 @@ if __name__ == "__main__":
     ]
     agent.ingest(knowledge)
     print(f"[存储层] 注入 {len(knowledge)} 块知识")
-    print(f"[存储层] 每 token 缓存: {agent.store.bytes_per_token():.1f}B (原 270KB → 35.6×)")
+    print(f"[存储层] 每 token 缓存: {agent.store.bytes_per_token():.1f}B (原 270KB → 28.4×)")
     print(f"[物理层] 初始: {agent.pager.stats()}")
 
     # 执行任务
