@@ -25,7 +25,7 @@ tags:
 
 ---
 
-## 🆕 v3 新特性: DeepSeek Harness 整合
+##  v3 新特性: DeepSeek Harness 整合
 
 DeepSeek Harness (`github.com/deepseek-ai/deepseek-harness`) 开源后，
 AgentFrame 作为 **compaction 后端插件**接入，实现"一切皆插件"：
@@ -55,15 +55,15 @@ DeepSeek Harness (dsh)                    AgentFrame (先明)
 ### 插件验证结果 (smoke test)
 
 ```
-✅ ctx.compaction = registered (引擎注册到 Cordis)
-✅ compactIfNeeded / compactNow / compactRegion 全实现
-✅ 语义压缩: 闲聊"今天天气不错" → 剔除
-✅ 语义压缩: 关键代码 "socket / ConnectionError" → 保留
+ ctx.compaction = registered (引擎注册到 Cordis)
+ compactIfNeeded / compactNow / compactRegion 全实现
+ 语义压缩: 闲聊"今天天气不错" → 剔除
+ 语义压缩: 关键代码 "socket / ConnectionError" → 保留
 ```
 
 ---
 
-## 🏗️ 架构 (三代演进)
+##  架构 (三代演进)
 
 | 版本 | 核心 | 突破 |
 |------|------|------|
@@ -85,18 +85,18 @@ DeepSeek Harness (dsh)                    AgentFrame (先明)
 └─────────────────────────────────────────────┘
 ```
 
-## ✨ 核心能力 (v1+v2 保留)
+##  核心能力 (v1+v2 保留)
 
 | 能力 | 说明 | 验证 |
 |------|------|------|
-| **KV 压缩** | 吸收式 MLA + INT4 = **35.6x** | ✅ L40S 实测 |
-| **语义蒸馏** | MemoryDirector 3.2x (67→21 tokens) | ✅ API 实测 |
-| **总压缩** | ~113x (27MB → 235KB) | ✅ |
-| **Top-K 保护** | 关键块 16bit + 其余 4bit = 0/100 翻转 | ✅ |
-| **Aura 遗忘** | S(t)=I·2^(-t/τ) 指数遗忘 | ✅ |
-| **3-Agent 验证** | 讨论室 + 幻觉检测 + 奖惩 | ✅ |
+| **KV 压缩** | 吸收式 MLA + INT4 = **35.6x** |  L40S 实测 |
+| **语义蒸馏** | MemoryDirector 3.2x (67→21 tokens) |  API 实测 |
+| **总压缩** | ~113x (27MB → 235KB) |  |
+| **Top-K 保护** | 关键块 16bit + 其余 4bit = 0/100 翻转 |  |
+| **Aura 遗忘** | S(t)=I·2^(-t/τ) 指数遗忘 |  |
+| **3-Agent 验证** | 讨论室 + 幻觉检测 + 奖惩 |  |
 
-## 🚀 快速开始
+##  快速开始
 
 ### AgentFrame 本体 (Python)
 
@@ -130,7 +130,7 @@ r = eng.ask_autopilot("我的服务器 IP 是 98.142.241.130")
 print(r.meta["memory_decision"])   # 自主记忆决策
 ```
 
-## 📁 发布内容
+##  发布内容
 
 ```
 AgentFrame-v3-preview/
@@ -146,7 +146,7 @@ AgentFrame-v3-preview/
         └── README.md
 ```
 
-## 📜 License
+##  License
 
 GPL-3.0 © Cloud LTE Studio
 

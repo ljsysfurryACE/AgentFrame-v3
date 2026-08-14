@@ -18,11 +18,11 @@ async function main() {
 
   // Verify it's exposed on ctx.compaction.
   const registered = ctx.get('compaction')
-  console.log('[smoke] ctx.compaction =', registered ? '✅ registered' : '❌ missing')
+  console.log('[smoke] ctx.compaction =', registered ? '✓ registered' : '× missing')
 
   // Verify class identity.
   console.log('[smoke] engine instanceof AgentFrameCompactionEngine =',
-    engine instanceof AgentFrameCompactionEngine ? '✅' : '❌')
+    engine instanceof AgentFrameCompactionEngine ? '✓' : '×')
 
   // Verify config.
   console.log('[smoke] config =', JSON.stringify(engine.config))
@@ -30,7 +30,7 @@ async function main() {
   // Verify abstract methods are implemented.
   const methods = ['compactIfNeeded', 'compactNow', 'compactRegion']
   for (const m of methods) {
-    console.log(`[smoke] ${m} =`, typeof (engine as any)[m] === 'function' ? '✅' : '❌')
+    console.log(`[smoke] ${m} =`, typeof (engine as any)[m] === 'function' ? '✓' : '×')
   }
 
   // Verify condense logic with a fake session.
@@ -59,13 +59,13 @@ async function main() {
   // Verify chatter was dropped (no "天气不错" in summary).
   const chatterDropped = !summary.includes('天气不错')
   const codeKept = summary.includes('socket')
-  console.log('[smoke] 闲聊被剔除 =', chatterDropped ? '✅' : '❌')
-  console.log('[smoke] 关键代码保留 =', codeKept ? '✅' : '❌')
+  console.log('[smoke] 闲聊被剔除 =', chatterDropped ? '✓' : '×')
+  console.log('[smoke] 关键代码保留 =', codeKept ? '✓' : '×')
 
-  console.log('\n✅ smoke test complete')
+  console.log('\n✓ smoke test complete')
 }
 
 main().catch((e) => {
-  console.error('❌ smoke test failed:', e)
+  console.error('× smoke test failed:', e)
   process.exit(1)
 })

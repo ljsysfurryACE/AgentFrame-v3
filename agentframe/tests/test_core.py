@@ -24,7 +24,7 @@ def test_ingest_and_retrieve():
     assert len(eng.agent.chunk_meta) == 3
     r = eng.ask("KV 压缩多少倍？", chat=False)
     assert len(r.retrieved) >= 1
-    print("✅ test_ingest_and_retrieve")
+    print("✓ test_ingest_and_retrieve")
 
 
 def test_similar_text_retrieval():
@@ -36,7 +36,7 @@ def test_similar_text_retrieval():
     r = eng.ask("MLA 潜在向量维度是多少？", chat=False)
     tops = [cid for cid, _ in r.retrieved]
     assert 0 in tops, f"期望命中 chunk_0, 实际 {tops}"
-    print(f"✅ test_similar_text_retrieval (top: {tops[:3]})")
+    print(f"✓ test_similar_text_retrieval (top: {tops[:3]})")
 
 
 def test_forget_curve():
@@ -50,7 +50,7 @@ def test_forget_curve():
     # 阈值设 0.1: strength = 0.5*0.031 + 0 ≈ 0.016 < 0.1 → 应遗忘
     victims = eng.forget(0.1)
     assert len(victims) >= 2, f"长时间不访问应遗忘, 实际 {len(victims)}"
-    print(f"✅ test_forget_curve (遗忘 {len(victims)}/3)")
+    print(f"✓ test_forget_curve (遗忘 {len(victims)}/3)")
 
 
 def test_save_load():
@@ -64,7 +64,7 @@ def test_save_load():
     assert ok
     assert len(eng2.agent.chunk_meta) == 1
     os.unlink(path)
-    print("✅ test_save_load")
+    print("✓ test_save_load")
 
 
 def test_hash_embedding_deterministic():
@@ -76,7 +76,7 @@ def test_hash_embedding_deterministic():
     sim_same = float(v1 @ v2)
     sim_diff = float(v1 @ v3)
     assert sim_same > sim_diff, f"{sim_same} vs {sim_diff}"
-    print(f"✅ test_hash_embedding (同句相似度 {sim_same:.3f} > 异句 {sim_diff:.3f})")
+    print(f"✓ test_hash_embedding (同句相似度 {sim_same:.3f} > 异句 {sim_diff:.3f})")
 
 
 def test_tool_exec():
@@ -85,7 +85,7 @@ def test_tool_exec():
     assert "42" in out
     bad = eng._exec_tool("print(undefined_var)")
     assert "Traceback" in bad or "Error" in bad
-    print("✅ test_tool_exec")
+    print("✓ test_tool_exec")
 
 
 if __name__ == "__main__":
@@ -95,4 +95,4 @@ if __name__ == "__main__":
     test_save_load()
     test_hash_embedding_deterministic()
     test_tool_exec()
-    print("\n🎉 全部核心测试通过!")
+    print("\n 全部核心测试通过!")

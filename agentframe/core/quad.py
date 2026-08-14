@@ -51,10 +51,10 @@ class HierarchicalKV:
           4  Block       = 1 Module (1024 token)
 
     用途 (Pro 讨论结论):
-      ✅ 存储骨架: 定位/索引/并行计算 (硬件对齐)
-      ✅ 驱逐决策: 两阶段价值分配 (每块分位数直方图 + 全局配额 + 块内排序)
-      ✅ 量化粒度: per-Sector (对齐 GPU warp)
-      ✅ 换页单元: per-Block (热/温/冷)
+      ✓ 存储骨架: 定位/索引/并行计算 (硬件对齐)
+      ✓ 驱逐决策: 两阶段价值分配 (每块分位数直方图 + 全局配额 + 块内排序)
+      ✓ 量化粒度: per-Sector (对齐 GPU warp)
+      ✓ 换页单元: per-Block (热/温/冷)
     """
     SECTOR_SIZE = 16    # token 数
     BLOCK_SECTORS = 16  # 每 Block 的 Sector 数
