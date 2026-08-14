@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentframe"
+version = "3.0.0-preview"
+description = "AgentFrame v3 先明 — Agent 框架 × DeepSeek Harness 整合 (35.6x KV 压缩 + MemoryDirector + dsh 插件)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0" }
+authors = [{ name = "Cloud LTE Studio" }]
+dependencies = [
+    "numpy>=1.24",
+    "flask>=3.0",
+]
+
+[project.optional-dependencies]
+api = ["flask>=3.0"]
+dev = ["pytest"]
+
+[project.scripts]
+agentframe = "agentframe.cli:main"
+agentframe-api = "agentframe.api.server:main"
+
+[tool.setuptools]
+packages = ["agentframe", "agentframe.core", "agentframe.llm",
+            "agentframe.embed", "agentframe.memory", "agentframe.api"]

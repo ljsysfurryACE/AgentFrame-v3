@@ -1,0 +1,20 @@
+{
+  "name": "@deepseek-ai/dsh-compaction-agentframe",
+  "version": "0.1.0",
+  "description": "AgentFrame compaction backend: semantic + physical KV compression (35.6x) replacing LLM summarization",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "license": "GPL-3.0",
+  "dependencies": {
+    "@deepseek-ai/cordis": "workspace:*",
+    "@deepseek-ai/schemastery": "workspace:*",
+    "@deepseek-ai/dsh-compaction": "workspace:*",
+    "@deepseek-ai/dsh-session": "workspace:*",
+    "@deepseek-ai/dsh-llm": "workspace:*",
+    "@deepseek-ai/dsh-agent": "workspace:*"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  }
+}
