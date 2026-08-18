@@ -216,6 +216,69 @@ def test_int4_packing():
     print(f"✅ test_int4_packing (cos={sim:.4f}, {ratio:.1f}x)")
 
 
+def test_incremental_persist():
+    """增量持久化 (colibrì kv_persist 移植): append + crash-safe 恢复"""
+    import tempfile, os
+    from agentframe.memory.incremental import IncrementalKVStore
+
+    path = tempfile.mktemp(suffix=".kv")
+    store = IncrementalKVStore(path)
+    # 追加 3 条
+    import numpy as np
+    n1 = store.append(0, np.zeros(288, dtype=np.uint8), np.ones(16, dtype=np.float32),
+                      np.zeros(576, dtype=np.float32), 4, 352, {"text": "A"})
+    n2 = store.append(1, np.ones(288, dtype=np.uint8), np.ones(16, dtype=np.float32) * 2,
+                      np.ones(576, dtype=np.float32), 4, 352, {"text": "B"})
+    n3 = store.append(2, np.zeros(288, dtype=np.uint8), np.ones(16, dtype=np.float32),
+                      np.zeros(576, dtype=np.float32), 4, 352, {"text": "C"})
+    assert n3 == 3
+    # 模拟崩溃: 写入半行垃圾
+    with open(path, "a") as f:
+        f.write('{"magic": "AFKV1", "chunk_id": 99, "q4": "zz')
+    recs = store.load()
+    assert len(recs) == 3, f"坏行应被跳过, 实际 {len(recs)}"
+    assert recs[1]["meta"]["text"] == "B"
+    print("✅ test_incremental_persist (append + crash-safe 坏行跳过)")
+    os.unlink(path)
+
+
+def test_prefix_reuse():
+    """查询前缀复用 (colibrì kv_prefix 移植)"""
+    eng = make_engine()
+    eng.ingest("KV 压缩 29 倍", ["kv"])
+    eng.ingest("LFRU 滞回驱逐", ["method"])
+    eng.ingest("Couple 预取", ["method"])
+    # 第一轮: 正常检索
+    r1 = eng.ask("KV 压缩是多少倍", chat=False)
+    first = r1.retrieved
+    # 第二轮: 相同前缀 → 复用
+    r2 = eng.ask("KV 压缩是多少倍呢", chat=False)
+    assert eng._prefix_hits == 1, "应触发前缀复用"
+    assert [c for c, _ in r2.retrieved] == [c for c, _ in first]
+    # 第三轮: 完全不同 → 不复用
+    r3 = eng.ask("今天天气怎么样", chat=False)
+    assert eng._prefix_hits == 1, "不同 query 不应复用"
+    print("✅ test_prefix_reuse (前缀命中复用, 不同 query 不复用)")
+
+
+def test_incremental_engine():
+    """引擎级增量恢复: ingest → enable → load_incremental 重建"""
+    import tempfile, os
+    path = tempfile.mktemp(suffix=".kv")
+    eng = make_engine()
+    eng.enable_incremental(path)
+    eng.ingest("增量持久化内容 A", ["a"])
+    eng.ingest("增量持久化内容 B", ["b"])
+    # 新引擎从日志恢复
+    eng2 = make_engine()
+    n = eng2.load_incremental(path)
+    assert n == 2, f"应恢复 2 块, 实际 {n}"
+    r = eng2.ask("增量持久化", chat=False)
+    assert len(r.retrieved) >= 1
+    os.unlink(path)
+    print("✅ test_incremental_engine (引擎级增量恢复 + 检索)")
+
+
 if __name__ == "__main__":
     test_ingest_and_retrieve()
     test_similar_text_retrieval()
@@ -228,4 +291,7 @@ if __name__ == "__main__":
     test_api_auth()
     test_couple_prefetch()
     test_int4_packing()
+    test_incremental_persist()
+    test_prefix_reuse()
+    test_incremental_engine()
     print("\n🎉 全部核心测试通过!")

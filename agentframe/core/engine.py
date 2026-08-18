@@ -22,6 +22,7 @@ from ..config import AgentFrameConfig, MemoryConfig
 from ..llm import create_llm, LLMProvider
 from ..embed import create_embedding, EmbeddingProvider
 from ..memory.store import StateStore
+from ..memory.incremental import IncrementalKVStore
 from .quad import QuadLayerAgent
 from .couple import CouplePrefetcher
 
@@ -140,6 +141,15 @@ class ContextEngine:
         # 跨轮共现预取 (colibrì couple_prefetch 移植)
         self.couple = CouplePrefetcher(top_k=m.couple_k)
 
+        # 增量持久化 (colibrì kv_persist 移植): 每轮 append, 不重写全量
+        self.incr_store = None
+        self.incr_path = None
+
+        # 查询前缀复用 (colibrì kv_prefix 移植)
+        self._last_query = None
+        self._last_retrieved = []
+        self._prefix_hits = 0
+
         # 会话状态
         self.chat_history = []
         self.max_history_turns = self.config.api.max_history_turns
@@ -167,6 +177,11 @@ class ContextEngine:
             "created_at": self.now,
         }
         self._chunk_counter += 1
+        # 增量追加持久化: 新 chunk 立即落盘 (crash-safe)
+        if self.incr_store is not None:
+            self.incr_store.append(
+                cid, kv.q4, kv.scales, kv.latent, kv.quant_bits,
+                kv.size_bytes, self.agent.chunk_meta[cid])
         return cid
 
     def ingest_batch(self, chunks: list) -> list:
@@ -230,9 +245,17 @@ class ContextEngine:
         subtasks = self.agent.metacog.decompose(query)
         directive = self.agent.metacog.build_directive(subtasks[0], self.agent.chunk_meta)
 
-        # 2. 路由层: landmark 检索
-        q_vec = self.embedder.embed(query)
-        selection = self.agent.router.route(q_vec, q_vec, self.agent.summaries)
+        # 1.5 查询前缀复用 (colibrì kv_prefix 移植):
+        #     新 query 与上一条共享长前缀 → 直接复用上次检索结果, 保持热块
+        reuse = self._prefix_reuse(query)
+        if reuse is not None:
+            selection = reuse
+        else:
+            # 2. 路由层: landmark 检索
+            q_vec = self.embedder.embed(query)
+            selection = self.agent.router.route(q_vec, q_vec, self.agent.summaries)
+        self._last_query = query
+        self._last_retrieved = list(selection.chunk_ids)
 
         # 2.5 跨轮共现预取: 记录本轮检索 + 预测下轮 → 提升冷块到 RAM
         self.couple.record(selection.chunk_ids)
@@ -294,6 +317,89 @@ class ContextEngine:
             context_dim=context_dim,
             directive=directive,
             meta={"now": self.now, "chunks": len(self.agent.chunk_meta)})
+
+    # ============ 前缀复用 (colibrì kv_prefix 移植) ============
+
+    def _prefix_reuse(self, query: str):
+        """
+        查询前缀复用: 新 query 与上一条共享长前缀 (前 70%+ 且 ≥8 字符)
+        → 直接复用上次检索结果 (跳过重新路由), 并保持上次热块不冷却。
+        返回 ChunkSelection 或 None (不复用)。
+        colibrì 对应: fed[] 序列前缀匹配, 跳过重复 prefill。
+        """
+        if self._last_query is None or not self._last_retrieved:
+            return None
+        prev, cur = self._last_query, query
+        if len(cur) < 8 or len(prev) < 8:
+            return None
+        # 公共前缀长度
+        common = 0
+        for a, b in zip(prev, cur):
+            if a != b:
+                break
+            common += 1
+        # 前缀须覆盖旧 query 的 70% 且新 query 的 50% (防过度复用)
+        if common >= len(prev) * 0.7 and common >= len(cur) * 0.5:
+            # 保持上次热块: 触碰一次 (刷新遗忘曲线)
+            for cid in self._last_retrieved:
+                kv = (self.agent.pager.vram.get(cid)
+                      or self.agent.pager.ram.get(cid)
+                      or self.agent.pager.disk.get(cid))
+                if kv is not None:
+                    self.agent.pager.access(cid, 0.5, self.now)
+            self._prefix_hits += 1
+            from .quad import ChunkSelection
+            return ChunkSelection(
+                chunk_ids=self._last_retrieved,
+                scores=[0.5] * len(self._last_retrieved),
+                weights=[1.0 / len(self._last_retrieved)] * len(self._last_retrieved))
+        return None
+
+    # ============ 增量持久化 (colibrì kv_persist 移植) ============
+
+    def enable_incremental(self, path: str):
+        """开启增量持久化: 新 chunk 追加到日志, 重启可增量恢复"""
+        self.incr_path = path
+        self.incr_store = IncrementalKVStore(path)
+        return self
+
+    def load_incremental(self, path: str = None) -> int:
+        """
+        从增量日志恢复所有 chunk (colibrì: 重启恢复, 不用重新 prefill)。
+        重建 chunk_meta + summaries + pager. 返回恢复的 chunk 数。
+        """
+        path = path or self.incr_path
+        if not path:
+            return 0
+        store = IncrementalKVStore(path)
+        if not store.exists():
+            return 0
+        recs = store.load()
+        restored = 0
+        for rec in recs:
+            cid = rec["chunk_id"]
+            # 跳过已存在的
+            if cid in self.agent.chunk_meta:
+                continue
+            from .quad import CompressedKV
+            kv = CompressedKV(
+                chunk_id=cid,
+                latent=rec["latent"],
+                quant_bits=rec["quant_bits"],
+                size_bytes=rec["size_bytes"],
+                q4=rec["q4"],
+                scales=rec["scales"],
+            )
+            kv.heat = 0.5
+            self.agent.chunk_meta[cid] = rec["meta"]
+            # 重建 landmark 摘要
+            k_prime, bias = self.agent.router.build_summary(
+                rec["latent"].reshape(1, -1))
+            self.agent.summaries[cid] = (k_prime, bias)
+            self.agent.pager.place(kv, self.now)
+            self._chunk_counter = max(self._chunk_counter, cid + 1)
+            restored += 1
+        return restored
 
     # ============ 工具增强版 ask ============
 

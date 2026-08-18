@@ -2,7 +2,7 @@
 
 **脑 = DeepSeek · 手 = 工具执行 · 记忆 = 四层上下文保持**
 
-版本 4.2.0 · GPL-3.0 · Cloud LTE Studio
+版本 4.3.0 · GPL-3.0 · Cloud LTE Studio
 
 ---
 
@@ -35,6 +35,8 @@
 | **Aura 遗忘** | S(t)=I·2^(-t/τ) 指数遗忘 + 访问增强 | ✓ 有测试 |
 | **LFRU 滞回** | 历史热块信用折减驱逐分数, 防抖动 (colibrì #441/#497) | ✓ 有测试 |
 | **Couple 预取** | 跨轮共现预取: 检索到 A 后预取常与 A 共现的 B (colibrì couple) | ✓ 有测试 |
+| **KV 增量持久化** | 每轮 append 不重写全量, crash-safe 坏行跳过 (colibrì kv_persist) | ✓ 有测试 |
+| **前缀复用** | 相同前缀 query 复用上次检索, 保持热块 (colibrì kv_prefix) | ✓ 有测试 |
 | **脑+手** | function calling 工具循环, Agent 自验证代码 | ✓ 有测试 + 安全拦截 |
 | **多会话** | 每会话独立引擎, 状态可持久化 | ✓ |
 
@@ -255,6 +257,15 @@ GPL-3.0 © Cloud LTE Studio
 ---
 
 ##  Changelog
+
+### v4.3.0 (2026-08-18) — KV 增量持久化 + 前缀复用
+
+**新增**
+- **IncrementalKVStore** (移植 colibrì kv_persist.h): 每轮 ingest 新 chunk 追加一行 JSON, 不重写全量快照; 行级独立 = crash-safe (坏行跳过); `enable_incremental()` 开启, `load_incremental()` 重启恢复
+- **查询前缀复用** (移植 colibrì kv_prefix.h): 新 query 与上一条共享 ≥70% 前缀 → 直接复用上次检索结果 (跳过重新路由) + 保持热块; `_prefix_hits` 统计
+- engine.ingest() 自动 append 到增量日志
+
+**测试**: 核心测试 16 项 (+test_incremental_persist / test_prefix_reuse / test_incremental_engine)
 
 ### v4.2.0 (2026-08-18) — 真 INT4 打包 (28.4x 落地)
 
