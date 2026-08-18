@@ -1,0 +1,21 @@
+[Unit]
+Description=AgentFrame Context API v4 (四层上下文保持 + LFRU 滞回)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/agentframe
+Environment="AGENTFRAME_API_KEY=REPLACE_WITH_YOUR_KEY"
+Environment="AGENTFRAME_MODEL=deepseek-v4-pro"
+Environment="AGENTFRAME_FAST_MODEL=deepseek-v4-flash"
+Environment="AGENTFRAME_PORT=8090"
+Environment="AGENTFRAME_STATE_DIR=/var/lib/agentframe"
+# ⚠️ 生产必须设置: 生成随机长字符串 (openssl rand -hex 32) 后填入
+Environment="AGENTFRAME_API_TOKEN=REPLACE_WITH_RANDOM_TOKEN"
+ExecStart=/usr/bin/python3 -m agentframe.api.server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

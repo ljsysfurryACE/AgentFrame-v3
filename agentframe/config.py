@@ -21,8 +21,9 @@ class LLMConfig:
 class MemoryConfig:
     """上下文保持核心配置"""
     n_layers: int = 27                      # 模型层数 (DeepSeek-V2 27 层)
-    quant_bits: int = 4                     # 量化位宽 (4 = INT4, 28.4x)
+    quant_bits: int = 4                     # 量化位宽 (4 = INT4, L40S 实测 28.4x)
     top_k: int = 32                         # 路由检索 top-k
+    couple_k: int = 8                       # 跨轮共现预取 top-k (colibrì COUPLE_K)
     vram_limit_mb: int = 10240              # 显存层上限
     ram_limit_mb: int = 32768               # 内存层上限
     seed: int = 42
@@ -36,6 +37,7 @@ class APIConfig:
     port: int = 8090
     debug: bool = False
     max_history_turns: int = 12             # 对话历史保留轮数
+    token: str = ""                        # API 访问令牌 (env AGENTFRAME_API_TOKEN, 空=仅本机)
 
 
 @dataclass
@@ -58,6 +60,7 @@ class AgentFrameConfig:
         cfg.llm.model = os.environ.get("AGENTFRAME_MODEL", cfg.llm.model)
         cfg.llm.fast_model = os.environ.get("AGENTFRAME_FAST_MODEL", cfg.llm.fast_model)
         cfg.api.port = int(os.environ.get("AGENTFRAME_PORT", cfg.api.port))
+        cfg.api.token = os.environ.get("AGENTFRAME_API_TOKEN", cfg.api.token)
         return cfg
 
     @classmethod

@@ -32,6 +32,7 @@ class CompressedKV:
     size_bytes: int = 0         # 实际字节数
     importance: float = 0.5     # 重要性 (遗忘曲线用, 0-1)
     access_count: int = 0       # 访问次数 (遗忘曲线用)
+    max_heat: float = 0.0       # 历史峰值热度 (LFRU 滞回用, 防抖)
     # ===== 自适应 Top-K 精度保护 (3-Agent 讨论室产出 + 实测迭代) =====
     protected: bool = False                   # 是否为 Top-K 高精度块 (路由层标记)
     reversible: bool = False                  # 启用保护机制
@@ -51,10 +52,10 @@ class HierarchicalKV:
           4  Block       = 1 Module (1024 token)
 
     用途 (Pro 讨论结论):
-      ✓ 存储骨架: 定位/索引/并行计算 (硬件对齐)
-      ✓ 驱逐决策: 两阶段价值分配 (每块分位数直方图 + 全局配额 + 块内排序)
-      ✓ 量化粒度: per-Sector (对齐 GPU warp)
-      ✓ 换页单元: per-Block (热/温/冷)
+      ✅ 存储骨架: 定位/索引/并行计算 (硬件对齐)
+      ✅ 驱逐决策: 两阶段价值分配 (每块分位数直方图 + 全局配额 + 块内排序)
+      ✅ 量化粒度: per-Sector (对齐 GPU warp)
+      ✅ 换页单元: per-Block (热/温/冷)
     """
     SECTOR_SIZE = 16    # token 数
     BLOCK_SECTORS = 16  # 每 Block 的 Sector 数
@@ -205,6 +206,7 @@ class AbsorbedMLA:
     """
     吸收式 MLA: 只缓存 576 维潜在向量, 不展开 KV
     270KB → 30.4KB (8.9×) → INT8 15.2KB → INT4 7.6KB (28.4×)
+    (28.4× 为 L40S 真实推理实测, DeepSeek-V2-Lite 15.7B; 当前仓库为 numpy 模拟版)
     """
     KV_LORA_RANK = 512
     K_ROPE = 64
@@ -261,8 +263,8 @@ class AbsorbedMLA:
         return per_layer * self.n_layers
 
     def memory_bytes(self, seq_len: int) -> int:
-        """N 层总占用"""
-        return self.bytes_per_token() * seq_len * self.n_layers
+        """N 层总占用 (bytes_per_token 已含层数, 不再重复乘)"""
+        return self.bytes_per_token() * seq_len
 
 
 # ============================================================
@@ -408,8 +410,18 @@ class KVPager:
         self.access_log = []  # (chunk_id, time, attention_score)
         self.curve = ForgettingCurve()  # 遗忘曲线 (Aura 移植)
 
-    def place(self, kv: CompressedKV, now: float = 0.0):
-        """放置: 按遗忘曲线强度分层"""
+    def place(self, kv: CompressedKV, now: float = 0.0, force_hot: bool = False):
+        """放置: 按遗忘曲线强度分层 (force_hot=True 时新知识优先进 VRAM)"""
+        if force_hot and kv.size_bytes > 0:
+            # 新摄入知识: 直接进热层 (若容量允许)
+            if self.vram_used + kv.size_bytes <= self.vram_limit:
+                self.vram[kv.chunk_id] = kv
+                self.vram_used += kv.size_bytes
+                kv.heat = 1.0
+                if kv.max_heat < 1.0:
+                    kv.max_heat = 1.0
+                kv.last_access = now
+                return
         strength = self.curve.strength(kv, now)
         kv.heat = strength
         if strength >= 0.6:
@@ -435,6 +447,9 @@ class KVPager:
             # 重新计算强度并分层
             strength = self.curve.strength(kv, now)
             kv.heat = strength
+            # 历史峰值热度 (LFRU 滞回基准): 曾热过的块不轻易驱逐
+            if strength > kv.max_heat:
+                kv.max_heat = strength
             # 磁盘 → 提升
             if chunk_id in self.disk and strength >= 0.5:
                 self.disk.pop(chunk_id)
@@ -451,12 +466,37 @@ class KVPager:
         time_decay = min((now - kv.last_access) / self.curve.compute_half_life(kv), 1.0)
         return 0.5 * forget_factor + 0.3 * attn_decay + 0.2 * time_decay
 
+    def effective_eviction_score(self, kv: CompressedKV, now: float) -> float:
+        """
+        LFRU 有效驱逐分数 (colibrì #441/#497 思想)
+        ============================================
+        历史峰值热度 (max_heat) 作为信用分折减驱逐分数: 曾热过的块给"
+        一次机会"。信用随时间衰减 (淡忘): 久不访问的热块最终仍会被驱逐。
+        完全冷透 (score>0.9) 时信用无效, 直接驱逐。
+        """
+        score = self.eviction_score(kv, now)
+        if score >= 0.9:
+            return score  # 彻底冷透: 历史热度救不了它
+        elapsed = max(now - kv.last_access, 0.0)
+        half_life = self.curve.compute_half_life(kv)
+        # 信用衰减: 每 2 个半衰期折半 (热块淡忘速度与遗忘曲线同源)
+        decayed_heat = kv.max_heat * math.pow(0.5, elapsed / (half_life * 2))
+        return score - 0.2 * decayed_heat
+
     def evict(self, now: float, target_layer: str = "vram"):
-        """驱逐: 选分数最高的换出"""
+        """
+        驱逐: LFRU 滞回 (防抖)
+        =======================
+        吸收 colibrì #441/#497: 纯 LRU/分数驱逐会让"历史高频但暂时冷却"的块
+        在驱逐边缘反复横跳。滞回规则: 历史峰值热度 (max_heat) 折减驱逐分数,
+        热过的块获得保护, 但信用随时间衰减, 完全冷透后照常驱逐。
+        """
         pool = self.vram if target_layer == "vram" else self.ram
         if not pool:
             return None
-        victim_id = max(pool, key=lambda cid: self.eviction_score(pool[cid], now))
+        # 按 LFRU 有效分数降序 (最该驱逐的在前)
+        victim_id = max(pool,
+                        key=lambda cid: self.effective_eviction_score(pool[cid], now))
         victim = pool.pop(victim_id)
         if target_layer == "vram":
             self.vram_used -= victim.size_bytes
@@ -465,6 +505,35 @@ class KVPager:
             self.ram_used -= victim.size_bytes
             self.disk[victim_id] = victim
         return victim_id
+
+    def prefetch(self, cids: list, now: float = 0.0) -> list:
+        """
+        预取 (colibrì couple_prefetch 落地): 把预测块从 disk 提升到 RAM 温层。
+        不占 VRAM 热层 (热层留给真实访问); RAM 满时驱逐最冷的 RAM 块腾位。
+        返回成功提升的块 id 列表。
+        """
+        moved = []
+        for cid in cids:
+            if cid not in self.disk:
+                continue  # 已在 RAM/VRAM, 无需提升
+            kv = self.disk.pop(cid)
+            kv.heat = 0.4            # 温层标记
+            kv.last_access = now
+            if self.ram_used + kv.size_bytes <= self.ram_limit:
+                self.ram[cid] = kv
+                self.ram_used += kv.size_bytes
+                moved.append(cid)
+                continue
+            # RAM 满: 驱逐最冷的 RAM 块腾位 (用 LFRU 有效分数)
+            victim_id = max(self.ram,
+                            key=lambda c: self.effective_eviction_score(self.ram[c], now))
+            victim = self.ram.pop(victim_id)
+            self.ram_used -= victim.size_bytes
+            self.disk[victim_id] = victim
+            self.ram[cid] = kv
+            self.ram_used += kv.size_bytes
+            moved.append(cid)
+        return moved
 
     def stats(self) -> dict:
         return {
@@ -669,7 +738,7 @@ if __name__ == "__main__":
     ]
     agent.ingest(knowledge)
     print(f"[存储层] 注入 {len(knowledge)} 块知识")
-    print(f"[存储层] 每 token 缓存: {agent.store.bytes_per_token():.1f}B (原 270KB → 28.4×)")
+    print(f"[存储层] 每 token 缓存: {agent.store.bytes_per_token():.1f}B (L40S 实测 28.4×)")
     print(f"[物理层] 初始: {agent.pager.stats()}")
 
     # 执行任务

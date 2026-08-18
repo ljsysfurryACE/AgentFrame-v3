@@ -5,7 +5,7 @@ ContextEngine — AgentFrame 核心引擎
 
   L1 MetaCog       认知层: 任务分解 / 信息缺口 / 检索指令
   L2 LandmarkRouter 路由层: landmark 摘要检索 top-k
-  L3 AbsorbedMLA   存储层: 吸收式 MLA 压缩 (28.4x)
+  L3 AbsorbedMLA   存储层: 吸收式 MLA 压缩 (L40S 实测 28.4x)
   L4 KVPager       物理层: 三级换页 + Aura 遗忘曲线
 
 对外接口 (引擎级, 与 API/CLI 解耦):
@@ -23,6 +23,7 @@ from ..llm import create_llm, LLMProvider
 from ..embed import create_embedding, EmbeddingProvider
 from ..memory.store import StateStore
 from .quad import QuadLayerAgent
+from .couple import CouplePrefetcher
 
 # DeepSeek 工具定义 (给 Agent 的"手")
 RUN_PYTHON_TOOL = [{
@@ -73,6 +74,46 @@ MEMORY_DIRECTOR_SYSTEM = (
 )
 
 
+# ============================================================
+# 工具执行安全防护 (P0: LLM 生成代码不可信)
+# ============================================================
+# 危险命令黑名单 (子串匹配, 命中即拒绝执行)
+DANGEROUS_PATTERNS = [
+    # 破坏性文件操作
+    "rm -rf", "rm -fr", "rmdir /", "mkfs", "dd if=", "shred",
+    "> /dev/sd", "mkfs.ext", "fdisk", "parted",
+    # 系统级操作
+    "shutdown", "reboot", "init 0", "init 6", "poweroff", "halt",
+    "systemctl stop", "systemctl disable", "kill -9 1",
+    # 提权/敏感读取
+    "sudo ", "su -", "chmod 777 /", "chown -R",
+    "cat /etc/shadow", "cat /etc/passwd", "cat ~/.ssh", "cat .ssh",
+    "cat /root/.ssh", "cat /root/.openclaw", "cat /etc/ssl/private",
+    "base64 -d /etc", "openssl genrsa", "ssh-keygen",
+    # 反弹 shell / 外联
+    "nc -e", "ncat -e", "bash -i >&", "/dev/tcp/", "curl | sh", "curl|sh", "wget | sh", "wget|sh",
+    "curl -o /etc", "wget -o /etc", "python -c 'import os; os.system",
+    # 挂载/防火墙/网络篡改
+    "mount ", "umount", "iptables", "nft ", "ip link set", "tcpdump",
+]
+
+MAX_TOOL_CODE_LEN = 4096   # 单次工具调用代码长度上限
+
+
+class ToolExecutionError(Exception):
+    """工具执行被安全策略拦截"""
+    pass
+
+
+def _check_code_safety(code: str) -> None:
+    """工具代码安全检查: 长度 + 危险模式黑名单"""
+    if len(code) > MAX_TOOL_CODE_LEN:
+        raise ToolExecutionError(f"代码过长 ({len(code)} > {MAX_TOOL_CODE_LEN} 字符), 已拦截")
+    for pat in DANGEROUS_PATTERNS:
+        if pat in code:
+            raise ToolExecutionError(f"命中危险模式 '{pat}', 已拦截")
+
+
 class ContextEngine:
     """四层上下文保持引擎"""
 
@@ -94,7 +135,10 @@ class ContextEngine:
             model=self.config.llm.model,
             fast_model=self.config.llm.fast_model,
             timeout=self.config.llm.timeout)
-        self.embedder = embedder or create_embedding("hash", dim=m.n_layers * 0 or 576)
+        self.embedder = embedder or create_embedding("hash", dim=self.agent.store.DIM)
+
+        # 跨轮共现预取 (colibrì couple_prefetch 移植)
+        self.couple = CouplePrefetcher(top_k=m.couple_k)
 
         # 会话状态
         self.chat_history = []
@@ -112,7 +156,8 @@ class ContextEngine:
         # 四层摄取: 用向量作为 hidden states 输入
         kv = self.agent.store.encode(vec)
         kv.heat = 0.9
-        self.agent.pager.place(kv, self.now)
+        # 新知识 = 热: force_hot 优先进 VRAM (修复 heat 设置无效问题)
+        self.agent.pager.place(kv, self.now, force_hot=True)
         # 建 landmark 摘要
         k_prime, bias = self.agent.router.build_summary(kv.latent.reshape(1, -1))
         cid = kv.chunk_id
@@ -132,9 +177,13 @@ class ContextEngine:
     # ============ 查询 ============
 
     def _exec_tool(self, code: str, timeout: int = 15) -> str:
-        """执行 run_python 工具"""
+        """执行 run_python 工具 (带安全防护)"""
         import subprocess
         import sys
+        try:
+            _check_code_safety(code)
+        except ToolExecutionError as e:
+            return f"[安全拦截] {e}"
         try:
             r = subprocess.run([sys.executable, "-c", code],
                                capture_output=True, text=True, timeout=timeout,
@@ -184,6 +233,12 @@ class ContextEngine:
         # 2. 路由层: landmark 检索
         q_vec = self.embedder.embed(query)
         selection = self.agent.router.route(q_vec, q_vec, self.agent.summaries)
+
+        # 2.5 跨轮共现预取: 记录本轮检索 + 预测下轮 → 提升冷块到 RAM
+        self.couple.record(selection.chunk_ids)
+        predicted = self.couple.predict(selection.chunk_ids)
+        if predicted:
+            self.agent.pager.prefetch(predicted, self.now)
 
         # 3. 物理层: 访问更新 (遗忘曲线刷新)
         for cid, score in zip(selection.chunk_ids, selection.scores):
@@ -246,10 +301,10 @@ class ContextEngine:
         """带工具循环的查询 (Agent 可自行执行代码验证)"""
         result = self.ask(query, chat=False)
         ctx_texts = []
-        for cid in result.retrieved:
-            meta = self.agent.chunk_meta.get(cid[0], {})
+        for cid, _preview in result.retrieved:
+            meta = self.agent.chunk_meta.get(cid, {})
             if meta.get("text"):
-                ctx_texts.append(f"[知识块 {cid[0]}] {meta['text']}")
+                ctx_texts.append(f"[知识块 {cid}] {meta['text']}")
         ctx_block = "\n".join(ctx_texts) if ctx_texts else "(无检索到相关知识块)"
         system = (
             "你是 AgentFrame 上下文保持系统。下面是检索到的知识块。"
@@ -345,7 +400,7 @@ class ContextEngine:
     # ============ 遗忘 / 状态 / 持久化 ============
 
     def forget(self, threshold: float = 0.15) -> list:
-        """按遗忘曲线清理弱记忆"""
+        """按遗忘曲线清理弱记忆 (同步更新内存计数, 防泄漏)"""
         victims = []
         for layer_name in ["disk", "ram", "vram"]:
             pool = getattr(self.agent.pager, layer_name)
@@ -354,6 +409,11 @@ class ContextEngine:
                 if strength < threshold:
                     victims.append(cid)
                     del pool[cid]
+                    # 同步扣减占用计数 (vram_used/ram_used), 防漂移
+                    if layer_name == "vram":
+                        self.agent.pager.vram_used -= kv.size_bytes
+                    elif layer_name == "ram":
+                        self.agent.pager.ram_used -= kv.size_bytes
                     self.agent.chunk_meta.pop(cid, None)
                     self.agent.summaries.pop(cid, None)
         return victims
@@ -365,7 +425,7 @@ class ContextEngine:
             "bytes_per_token": round(self.agent.store.bytes_per_token(), 2),
             "chat_history_turns": len(self.chat_history) // 2,
             "now": self.now,
-            "compression": "吸收式MLA + INT4 = 28.4x (L40S 实测)",
+            "compression": "吸收式MLA + INT4 = 28.4x (L40S 真实推理实测)",
         }
 
     def save(self, path: str):
@@ -391,7 +451,9 @@ class ContextEngine:
         if not state:
             return False
         self.agent.chunk_meta = {int(k): v for k, v in state.get("chunk_meta", {}).items()}
-        self.agent.summaries = {int(k): v for k, v in state.get("summaries", {}).items()}
+        # JSON 序列化后 (k_prime, bias) 变 list, 转回 tuple
+        self.agent.summaries = {int(k): (v[0], v[1]) if isinstance(v, list) and len(v) == 2 else v
+                                for k, v in state.get("summaries", {}).items()}
         self.chat_history = state.get("chat_history", [])
         self.now = state.get("now", 0.0)
         self._chunk_counter = state.get("counter", 0)

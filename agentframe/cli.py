@@ -36,7 +36,7 @@ def cmd_serve(args):
     from agentframe.api.server import AgentFrameAPI
     config = AgentFrameConfig.from_file(args.config) if args.config else AgentFrameConfig.from_env()
     api = AgentFrameAPI(config)
-    print(f" AgentFrame API — http://{config.api.host}:{args.port or config.api.port}")
+    print(f"🚀 AgentFrame API — http://{config.api.host}:{args.port or config.api.port}")
     api.app.run(host=config.api.host, port=args.port or config.api.port,
                 debug=config.api.debug)
 
@@ -48,7 +48,7 @@ def cmd_ingest(args):
     sp = args.state or DEFAULT_STATE
     os.makedirs(os.path.dirname(sp), exist_ok=True)
     eng.save(sp)
-    print(f"✓ 摄入 chunk_{cid}: {args.text[:50]}...")
+    print(f"✅ 摄入 chunk_{cid}: {args.text[:50]}...")
     print(f"   标签: {tags} | 已存: {sp}")
 
 
@@ -58,11 +58,11 @@ def cmd_ask(args):
         result = eng.ask_with_hands(args.query)
     else:
         result = eng.ask(args.query, chat=not args.no_chat)
-    print(f"\n 检索到 {len(result.retrieved)} 块:")
+    print(f"\n🧠 检索到 {len(result.retrieved)} 块:")
     for cid, prev in result.retrieved:
         print(f"   chunk_{cid}: {prev}...")
     if result.answer:
-        print(f"\n 回答:\n{result.answer}")
+        print(f"\n💬 回答:\n{result.answer}")
     sp = args.state or DEFAULT_STATE
     eng.save(sp)
 
@@ -78,7 +78,7 @@ def cmd_forget(args):
     victims = eng.forget(args.threshold)
     sp = args.state or DEFAULT_STATE
     eng.save(sp)
-    print(f" 遗忘 {len(victims)} 块: {victims}")
+    print(f"🧹 遗忘 {len(victims)} 块: {victims}")
     print(f"   剩余: {len(eng.agent.chunk_meta)} 块")
 
 
@@ -86,7 +86,7 @@ def cmd_config(args):
     config = AgentFrameConfig.from_env()
     out = args.output or "agentframe.config.json"
     config.save(out)
-    print(f"✓ 配置已写入: {out}")
+    print(f"✅ 配置已写入: {out}")
     print(f"   LLM: {config.llm.provider} / {config.llm.model}")
     print(f"   Memory: {config.memory.n_layers}层 INT{config.memory.quant_bits} top-k={config.memory.top_k}")
     print(f"   API: {config.api.host}:{config.api.port}")
@@ -110,18 +110,18 @@ def cmd_demo(args):
     ]
     for c in chunks:
         cid = eng.ingest(c["text"], c["tags"])
-        print(f"   摄入 chunk_{cid}: {c['text']}")
+        print(f"  📥 摄入 chunk_{cid}: {c['text']}")
 
     print(f"\n  [存储] {eng.stats()['layers']}")
     print(f"  [压缩] {eng.stats()['bytes_per_token']} B/token")
 
     r = eng.ask("KV压缩能到多少倍？", chat=True)
-    print(f"\n   检索: {r.retrieved}")
-    print(f"   回答: {r.answer}")
+    print(f"\n  🧠 检索: {r.retrieved}")
+    print(f"  💬 回答: {r.answer}")
 
     v = eng.forget(0.3)
-    print(f"\n   遗忘: {len(v)} 块 → 剩余 {len(eng.agent.chunk_meta)} 块")
-    print("\n✓ 演示完成")
+    print(f"\n  🧹 遗忘: {len(v)} 块 → 剩余 {len(eng.agent.chunk_meta)} 块")
+    print("\n✅ 演示完成")
 
 
 def main():

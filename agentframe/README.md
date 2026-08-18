@@ -2,7 +2,7 @@
 
 **脑 = DeepSeek · 手 = 工具执行 · 记忆 = 四层上下文保持**
 
-版本 1.0.0 · GPL-3.0 · Cloud LTE Studio
+版本 4.1.0 · GPL-3.0 · Cloud LTE Studio
 
 ---
 
@@ -29,11 +29,13 @@
 
 | 能力 | 说明 | 验证状态 |
 |------|------|---------|
-| **KV 压缩** | 吸收式 MLA + INT4 = **28.4x** (270KB→7.6KB/token) | ✓ L40S 实测 |
-| **Top-K 保护** | 关键块 16bit + 其余 4bit = **0/100 翻转** | ✓ 实测 |
-| **分层组织** | Sector(16)-Block(256)-Module(1024) 硬件对齐 | ✓ |
-| **Aura 遗忘** | S(t)=I·2^(-t/τ) 指数遗忘 + 访问增强 | ✓ |
-| **脑+手** | function calling 工具循环, Agent 自验证代码 | ✓ 讨论室实测 |
+| **KV 压缩** | 吸收式 MLA + INT4 = **28.4x** (270KB→7.6KB/token) | ✓ L40S 真实推理实测 (V2-Lite 15.7B) |
+| **Top-K 保护** | 关键块 16bit + 其余 4bit = **0/100 翻转** | ✓ 实测 (独立实验, 未接入主流程) |
+| **分层组织** | Sector(16)-Block(256)-Module(1024) 硬件对齐 | ⚠️ 设计未接入 |
+| **Aura 遗忘** | S(t)=I·2^(-t/τ) 指数遗忘 + 访问增强 | ✓ 有测试 |
+| **LFRU 滞回** | 历史热块信用折减驱逐分数, 防抖动 (colibrì #441/#497) | ✓ 有测试 |
+| **Couple 预取** | 跨轮共现预取: 检索到 A 后预取常与 A 共现的 B (colibrì couple) | ✓ 有测试 |
+| **脑+手** | function calling 工具循环, Agent 自验证代码 | ✓ 有测试 + 安全拦截 |
 | **多会话** | 每会话独立引擎, 状态可持久化 | ✓ |
 
 ##  快速开始
@@ -62,7 +64,7 @@ python3 -m agentframe.cli config
 
 ```bash
 # 摄入知识
-python3 -m agentframe.cli ingest "KV 压缩 28.4x 实测" --tags "kv"
+python3 -m agentframe.cli ingest "KV 压缩 28.4x L40S 实测" --tags "kv"
 
 # 查询 (带 DeepSeek 生成)
 python3 -m agentframe.cli ask "KV 压缩多少倍？"
@@ -115,7 +117,7 @@ from agentframe.core.engine import ContextEngine
 cfg = AgentFrameConfig.from_env()
 eng = ContextEngine(cfg)
 
-eng.ingest("AgentFrame KV 压缩 28.4x", ["kv"])
+eng.ingest("AgentFrame KV 压缩设计", ["kv"])
 result = eng.ask("KV 压缩多少倍？")
 print(result.answer)          # DeepSeek 回答
 print(result.retrieved)       # 检索到的知识块
@@ -143,10 +145,11 @@ agentframe/
 ##  关键技术 (实测数据)
 
 1. **吸收式 MLA**: 只缓存 576 维潜在向量 (512 kv_lora + 64 k_pe), 不展开 KV
-   - 270KB → 30.4KB (8.9x) → INT8 15.2KB → **INT4 7.6KB (28.4x)**
-2. **Top-K 自适应精度保护**: 路由层已知 Top-K → 关键块 16bit + 其余 4bit
+   - 270KB → 30.4KB (8.9x) → INT8 15.2KB → **INT4 7.6KB (28.4x)** — L40S 真实推理实测 (DeepSeek-V2-Lite 15.7B)
+   - 真实推理验证: 压缩后输出语义正确/流畅/质量不降
+2. **Top-K 自适应精度保护** (实测, 未接入主流程): 路由层已知 Top-K → 关键块 16bit + 其余 4bit
    - 1bit 符号补偿 × (17/50 翻转) / 排序保护 × (29/100) / **Top-K 块 16bit ✓ (0/100)**
-3. **Sector-Block-Module**: 16 token=Sector, 16 Sector=Block(256), 4 Block=Module(1024)
+3. **Sector-Block-Module** (设计, 未接入): 16 token=Sector, 16 Sector=Block(256), 4 Block=Module(1024)
    - 结构做骨架 / 价值做决策 / 粒度分层
 4. **Aura 遗忘曲线**: S(t) = I·2^(-t/τ) + log2(access+1)×0.1
 5. **注意力分数 ≠ 任务重要性** (3-Agent 讨论室 v3 产出):
@@ -160,9 +163,9 @@ AgentFrame 的压缩不是单一技术，而是**两个正交维度的叠加**�
 | 维度 | 语义压缩 (MemoryDirector) | 物理压缩 (AbsorbedMLA) |
 |------|--------------------------|------------------------|
 | **管什么** | 哪些 token 值得留 | 留下的 token 怎么存得小 |
-| **机制** | LLM 语义判断驱逐 | 576维潜在向量 + INT4 |
+| **机制** | LLM 语义判断驱逐 | 576维潜在向量 + 量化 |
 | **决策者** | DeepSeek (懂语义) | 量化器 (确定性) |
-| **压缩比** | **~3.2x** (闲聊剔除) | **28.4x** (270KB→7.6KB) |
+| **压缩比** | **~3.2x** (闲聊剔除, 实测) | **28.4x** (L40S 实测) |
 | **失败历史** | 数值启发式全被证伪 | 浮点精度经 Top-K 保护 |
 | **能否叠加** | 正交, 相乘 | 正交, 相乘 |
 
@@ -176,15 +179,15 @@ AgentFrame 的压缩不是单一技术，而是**两个正交维度的叠加**�
 
 **语义压缩 (3.2x) — 砍的是数量**: 原本要存 100 个 Token 的上下文, LLM 判断后只保留 31 个。这是**内容层面的筛选**。
 
-**物理压缩 (28.4x) — 砍的是体积**: 这 31 个 Token 的 KV Cache, 原本占 270KB, 通过 INT4 量化 + MLA, 硬塞进 7.6KB。这是**存储层面的瘦身**。
+**物理压缩 (28.4x) — 砍的是体积**: 这 31 个 Token 的 KV Cache, 原本占 270KB, 通过 INT4 量化 + MLA, 硬塞进 7.6KB (L40S 实测)。这是**存储层面的瘦身**。
 
-**相乘**: 原本存 100 个 Token 要占 `100 × 270KB = 27MB`, 现在只存 `31 × 7.6KB ≈ 235KB` — 算下来确实是 **~115 倍**。
+**相乘**: 原本存 100 个 Token 要占 `100 × 270KB = 27MB`, 现在只存 `31 × 7.6KB ≈ 235KB` — 算下来是 **~115 倍** (物理侧基于 L40S 实测值)。
 
 ```
 100 tokens × 270KB = 27MB   (原始)
       ↓ 语义压缩 3.2x (砍数量: 100 → 31)
 31 tokens × 270KB = 8.4MB   (内容筛选后)
-      ↓ 物理压缩 28.4x (砍体积: 270KB → 7.6KB)
+      ↓ 物理压缩 28.4x (砍体积: 270KB → 7.6KB, L40S 实测)
 31 tokens × 7.6KB ≈ 235KB   (存储瘦身后)
       = ~115x 总压缩
 ```
@@ -219,7 +222,7 @@ MemoryDirector 的决策：
 | 输入 | 67 tokens | 含关键信息+闲聊 |
 | 语义保留 | 21 tokens | 4 条关键信息 |
 | **语义压缩** | **3.2x** | 闲聊被模型自动剔除 |
-| 物理压缩 | 28.4x | 270KB→7.6KB/token |
+| 物理压缩 | 28.4x | L40S 实测 270KB→7.6KB/token |
 | **总压缩** | **~113x** | 17.7MB → 159KB |
 
 ### 语义压缩的安全意识 (意外收获)
@@ -239,7 +242,7 @@ MemoryDirector 的决策：
 ```
 总压缩 = 语义压缩 × 物理压缩
        = (输入token / 保留token) × (原始字节 / 压缩字节)
-       ≈ 3.2 × 28.4
+       ≈ 3.2 × 28.4 (28.4x 为 L40S 实测)
        ≈ 113x
 ```
 
@@ -248,6 +251,42 @@ MemoryDirector 的决策：
 ##  许可证
 
 GPL-3.0 © Cloud LTE Studio
+
+---
+
+##  Changelog
+
+### v4.1.0 (2026-08-18) — Couple 跨轮共现预取
+
+**新增**
+- **CouplePrefetcher** (移植 colibrì couple_prefetch): 学习跨轮检索共现表 (检索到 A 后下一轮往往检索 B), 运行时预测下轮所需块
+- **KVPager.prefetch()**: 预测块从 disk 提升到 RAM 温层 (不占 VRAM 热层); RAM 满时用 LFRU 有效分数驱逐最冷块腾位
+- ask() 主流程接线: 每轮检索后 record + predict + prefetch
+- MemoryConfig.couple_k (默认 8, 对应 colibrì COUPLE_K)
+
+**测试**: 核心测试 10 项 (+test_couple_prefetch: 学习/预测/提升/腾位)
+
+### v4.0.0 (2026-08-18) — LFRU 滞回 + 安全加固
+
+**新增**
+- **LFRU 滞回驱逐** (吸收 colibrì #441/#497): 历史峰值热度 (max_heat) 作为信用分折减驱逐分数, 曾热过的块获得保护; 信用随时间衰减 (每 2 半衰期折半), 完全冷透后照常驱逐
+- `effective_eviction_score()`: LFRU 打分接口
+- API Bearer token 认证: 配置 `AGENTFRAME_API_TOKEN` 后全端点校验 (除 /health); 未配置仅本机回环可访问
+- 工具执行安全防护: 危险模式黑名单 (rm -rf/shutdown/反弹shell/读密钥等) + 4096 字符长度上限
+- 请求体上限 2MB
+
+**修复**
+- forget() 内存计数泄漏 (删块同步扣减 vram_used/ram_used)
+- memory_bytes() 重复乘 n_layers 错误
+- 新摄入知识 heat 设置无效 (place 加 force_hot, 新块优先进 VRAM)
+- summaries 反序列化类型漂移 (list→tuple)
+- dim 迷惑写法 → store.DIM; ask_with_hands 命名清理
+
+**测试**: 核心测试 9 项 (新增 LFRU 滞回 / 工具安全 / API 认证)
+
+### v3.0.0-preview — 整合 DeepSeek Harness + dsh 插件
+
+- 四层上下文保持 (认知×路由×存储×物理) + MemoryDirector 自主记忆 + 脑手一体
 
 ---
 

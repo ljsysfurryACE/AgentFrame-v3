@@ -18,13 +18,13 @@ def make_engine() -> ContextEngine:
 
 def test_ingest_and_retrieve():
     eng = make_engine()
-    eng.ingest("KV 缓存压缩 28.4x 实测", ["kv"])
+    eng.ingest("KV 缓存压缩测试数据", ["kv"])
     eng.ingest("注意力分数不等于任务重要性", ["agent"])
     eng.ingest("Minecraft 1.20.4 逆向完成", ["mc"])
     assert len(eng.agent.chunk_meta) == 3
     r = eng.ask("KV 压缩多少倍？", chat=False)
     assert len(r.retrieved) >= 1
-    print("✓ test_ingest_and_retrieve")
+    print("✅ test_ingest_and_retrieve")
 
 
 def test_similar_text_retrieval():
@@ -36,7 +36,7 @@ def test_similar_text_retrieval():
     r = eng.ask("MLA 潜在向量维度是多少？", chat=False)
     tops = [cid for cid, _ in r.retrieved]
     assert 0 in tops, f"期望命中 chunk_0, 实际 {tops}"
-    print(f"✓ test_similar_text_retrieval (top: {tops[:3]})")
+    print(f"✅ test_similar_text_retrieval (top: {tops[:3]})")
 
 
 def test_forget_curve():
@@ -50,7 +50,7 @@ def test_forget_curve():
     # 阈值设 0.1: strength = 0.5*0.031 + 0 ≈ 0.016 < 0.1 → 应遗忘
     victims = eng.forget(0.1)
     assert len(victims) >= 2, f"长时间不访问应遗忘, 实际 {len(victims)}"
-    print(f"✓ test_forget_curve (遗忘 {len(victims)}/3)")
+    print(f"✅ test_forget_curve (遗忘 {len(victims)}/3)")
 
 
 def test_save_load():
@@ -64,7 +64,7 @@ def test_save_load():
     assert ok
     assert len(eng2.agent.chunk_meta) == 1
     os.unlink(path)
-    print("✓ test_save_load")
+    print("✅ test_save_load")
 
 
 def test_hash_embedding_deterministic():
@@ -76,7 +76,7 @@ def test_hash_embedding_deterministic():
     sim_same = float(v1 @ v2)
     sim_diff = float(v1 @ v3)
     assert sim_same > sim_diff, f"{sim_same} vs {sim_diff}"
-    print(f"✓ test_hash_embedding (同句相似度 {sim_same:.3f} > 异句 {sim_diff:.3f})")
+    print(f"✅ test_hash_embedding (同句相似度 {sim_same:.3f} > 异句 {sim_diff:.3f})")
 
 
 def test_tool_exec():
@@ -85,7 +85,114 @@ def test_tool_exec():
     assert "42" in out
     bad = eng._exec_tool("print(undefined_var)")
     assert "Traceback" in bad or "Error" in bad
-    print("✓ test_tool_exec")
+    print("✅ test_tool_exec")
+
+
+def test_lfru_hysteresis():
+    """LFRU 滞回驱逐: 历史热块获得保护, 信用随时间衰减 (colibrì #441/#497)"""
+    import numpy as np
+    from agentframe.core.quad import KVPager, CompressedKV
+
+    def mk(cid, max_heat, acc):
+        return CompressedKV(
+            chunk_id=cid, latent=np.zeros(576, dtype=np.float32),
+            quant_bits=4, heat=max_heat, size_bytes=1000,
+            importance=0.5, access_count=acc, max_heat=max_heat,
+            last_access=0)
+
+    # 冷却 200 轮 (2 个半衰期): 历史热块应被保护
+    p = KVPager(vram_limit_mb=0.006, ram_limit_mb=64)
+    for kv in [mk(0, 0.95, 0), mk(1, 0.4, 0), mk(2, 0.5, 0),
+               mk(3, 0.5, 0), mk(4, 0.5, 0)]:
+        p.vram[kv.chunk_id] = kv
+        p.vram_used += kv.size_bytes
+    victim = p.evict(200.0, "vram")
+    assert victim == 1, f"历史热块0应被保护, 实际驱逐 {victim}"
+
+    # 完全冷透 (2000 轮): 信用衰减殆尽, 照常驱逐
+    p2 = KVPager(vram_limit_mb=0.006, ram_limit_mb=64)
+    for kv in [mk(0, 0.95, 0), mk(1, 0.4, 0), mk(2, 0.5, 0),
+               mk(3, 0.5, 0), mk(4, 0.5, 0)]:
+        p2.vram[kv.chunk_id] = kv
+        p2.vram_used += kv.size_bytes
+    assert p2.evict(2000.0, "vram") is not None
+    print("✅ test_lfru_hysteresis (滞回保护 + 信用衰减)")
+
+
+def test_tool_safety():
+    """工具执行安全: 危险命令/超长代码应被拦截"""
+    eng = make_engine()
+    out = eng._exec_tool("import os; os.system('rm -rf /tmp/x')")
+    assert "安全拦截" in out, out
+    out2 = eng._exec_tool("import subprocess; subprocess.run(['shutdown'])")
+    assert "安全拦截" in out2, out2
+    print("✅ test_tool_safety (危险命令拦截)")
+
+
+def test_api_auth():
+    """API 认证: token 模式 + 回环模式"""
+    import os
+    from agentframe.api.server import AgentFrameAPI
+    from agentframe.config import AgentFrameConfig
+    os.environ["AGENTFRAME_STATE_DIR"] = "/tmp/af_test_auth"
+    cfg = AgentFrameConfig.from_env()
+    cfg.api.token = "test-token"
+    api = AgentFrameAPI(cfg)
+    client = api.app.test_client()
+    assert client.get("/v1/sessions").status_code == 401
+    ok = client.get("/v1/sessions",
+                    headers={"Authorization": "Bearer test-token"})
+    assert ok.status_code == 200
+    print("✅ test_api_auth (Bearer 认证)")
+
+
+def test_couple_prefetch():
+    """跨轮共现预取: 学习共现 → 预测 → disk→RAM 提升 (colibrì couple 移植)"""
+    import numpy as np
+    from agentframe.core.couple import CouplePrefetcher
+    from agentframe.core.quad import KVPager, CompressedKV
+
+    def mk(cid):
+        return CompressedKV(chunk_id=cid, latent=np.zeros(576, dtype=np.float32),
+                            quant_bits=4, heat=0.1, size_bytes=1000,
+                            importance=0.5)
+
+    # 1. 共现学习: 轮1检索{0,1}, 轮2检索{1,2}, 轮3检索{2,3}
+    cp = CouplePrefetcher(top_k=8)
+    cp.record([0, 1])
+    cp.record([1, 2])
+    cp.record([2, 3])
+    # 轮2后: (0,2)共现1, (1,2)共现1; 轮3后: (1,2)再+1, (1,3)共现1, (2,3)共现1
+    assert cp.cooccur[0][2] == 1
+    assert cp.cooccur[1][2] == 2  # 轮2(1在prev,2在cur) + 轮3(1在prev,2在cur)
+    assert cp.cooccur[2][3] == 1
+    assert cp.cooccur[1][3] == 1
+    # 2. 预测: 当前检索{1} → 预测 2 (共现1)
+    pred = cp.predict([1])
+    assert 2 in pred, f"应预测到块2, 实际 {pred}"
+    assert 1 not in pred, "预测不应包含当前集合中的块"
+    print(f"✅ test_couple_prefetch (学习+预测: {pred[:4]})")
+
+    # 3. 预取落地: 块2在 disk, prefetch 后应到 RAM (不进 VRAM)
+    p = KVPager(vram_limit_mb=64, ram_limit_mb=0.006)  # 6KB RAM
+    for cid in (0, 1, 3):
+        p.disk[cid] = mk(cid)
+    p.disk[2] = mk(2)  # 目标块在 disk
+    moved = p.prefetch([2], now=1.0)
+    assert 2 in moved
+    assert 2 in p.ram and 2 not in p.vram and 2 not in p.disk
+    print("✅ test_couple_prefetch (预取 disk→RAM, 不占 VRAM)")
+
+    # 4. RAM 满时腾位: 塞满 RAM 后预取新块
+    p2 = KVPager(vram_limit_mb=64, ram_limit_mb=0.005)  # 5KB RAM (最多5块)
+    for cid in range(5):
+        p2.ram[cid] = mk(cid)
+        p2.ram_used += 1000
+    p2.disk[99] = mk(99)
+    moved2 = p2.prefetch([99], now=1.0)
+    assert 99 in p2.ram
+    assert len(p2.ram) == 5  # 腾位后仍不超限
+    print("✅ test_couple_prefetch (RAM 满时 LFRU 腾位)")
 
 
 if __name__ == "__main__":
@@ -95,4 +202,8 @@ if __name__ == "__main__":
     test_save_load()
     test_hash_embedding_deterministic()
     test_tool_exec()
-    print("\n 全部核心测试通过!")
+    test_lfru_hysteresis()
+    test_tool_safety()
+    test_api_auth()
+    test_couple_prefetch()
+    print("\n🎉 全部核心测试通过!")

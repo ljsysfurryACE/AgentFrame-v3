@@ -35,10 +35,31 @@ class AgentFrameAPI:
             "AGENTFRAME_STATE_DIR", "/var/lib/agentframe")
         os.makedirs(self.state_dir, exist_ok=True)
 
+        self.token = (self.config.api.token or "").strip()
+        if not self.token:
+            print("⚠️ 未配置 AGENTFRAME_API_TOKEN — 仅允许本机回环访问 (127.0.0.1)")
+            print("   生产部署请设置: export AGENTFRAME_API_TOKEN=<随机长字符串>")
+
         self.sessions = {}   # sid -> ContextEngine
 
         self.app = Flask("agentframe")
+        self.app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024  # 请求体上限 2MB
         self._register_routes()
+
+    # ============ 认证 ============
+
+    def _authorize(self) -> bool:
+        """
+        认证策略:
+        - 配置了 token → 必须携带 Authorization: Bearer <token>
+        - 未配置 token → 仅接受本机回环来源 (生产应配置 token)
+        """
+        from flask import request as _req
+        if self.token:
+            auth = _req.headers.get("Authorization", "")
+            return auth == f"Bearer {self.token}"
+        # 无 token 模式: 仅回环
+        return _req.remote_addr in ("127.0.0.1", "::1", "localhost")
 
     # ============ 会话管理 ============
 
@@ -68,7 +89,7 @@ class AgentFrameAPI:
                     self.sessions[sid] = eng
                     print(f"   ↻ 恢复会话 {sid}")
             except Exception as e:
-                print(f"    恢复失败 {sid}: {e}")
+                print(f"   ⚠️ 恢复失败 {sid}: {e}")
 
     # ============ 路由 ============
 
@@ -76,9 +97,17 @@ class AgentFrameAPI:
         app = self.app
         self._restore_sessions()
 
+        @app.before_request
+        def _auth_guard():
+            """除 /health 外全部端点要求认证"""
+            if request.path == "/health":
+                return None
+            if not self._authorize():
+                return jsonify({"error": "未授权: 缺少有效 Bearer token"}), 401
+
         @app.get("/health")
         def health():
-            return jsonify({"status": "ok", "version": "1.0.0",
+            return jsonify({"status": "ok", "version": "4.1.0",
                             "sessions": len(self.sessions),
                             "system": "AgentFrame Context API"})
 
@@ -228,7 +257,7 @@ def main():
     config = AgentFrameConfig.from_env()
     port = int(sys.argv[1]) if len(sys.argv) > 1 else config.api.port
     api = AgentFrameAPI(config)
-    print(f" AgentFrame API v1.0.0")
+    print(f"🚀 AgentFrame API v4.1.0")
     print(f"   四层上下文保持: 认知×路由×存储×物理")
     print(f"   会话: POST /v1/sessions | 摄入: /ingest | 查询: /ask")
     print(f"   监听: {config.api.host}:{port}")
