@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentframe"
-version = "4.1.0"
-description = "AgentFrame v4.1 — Agent 框架 × DeepSeek Harness 整合 (L40S 实测 28.4x KV 压缩 + Couple 跨轮预取 + LFRU 滞回 + MemoryDirector)"
+version = "4.2.0"
+description = "AgentFrame v4.2 — 真 INT4 打包 (29.1x) + Couple 跨轮预取 + LFRU 滞回 + MemoryDirector"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "GPL-3.0" }

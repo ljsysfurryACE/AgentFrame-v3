@@ -195,6 +195,27 @@ def test_couple_prefetch():
     print("✅ test_couple_prefetch (RAM 满时 LFRU 腾位)")
 
 
+def test_int4_packing():
+    """真 INT4 打包 (colibrì quant.h 移植): 往返精度 + 真实压缩比"""
+    import numpy as np
+    from agentframe.core.quad import ReversibleQuantizer, AbsorbedMLA
+
+    rng = np.random.default_rng(42)
+    latent = np.tanh(rng.normal(0, 1, 576).astype(np.float32))
+    q4, scales, size = ReversibleQuantizer.quantize_int4(latent, n_ch=16)
+    deq = ReversibleQuantizer.dequant_int4(q4, scales, 576)
+    # 往返精度: 余弦相似度 > 0.99
+    sim = float(deq @ latent) / (np.linalg.norm(deq) * np.linalg.norm(latent))
+    assert sim > 0.99, f"INT4 往返相似度 {sim:.4f}"
+    # 真实压缩: 352B vs 原始 2304B
+    assert size == 288 + 64, f"打包大小 {size} != 352"
+    # 每 token 压缩比对齐 L40S 实测 28.4x
+    m = AbsorbedMLA(n_layers=27, quant_bits=4, n_ch=16)
+    ratio = 270 * 1024 / m.bytes_per_token()
+    assert ratio > 25, f"压缩比 {ratio:.1f}x 不足"
+    print(f"✅ test_int4_packing (cos={sim:.4f}, {ratio:.1f}x)")
+
+
 if __name__ == "__main__":
     test_ingest_and_retrieve()
     test_similar_text_retrieval()
@@ -206,4 +227,5 @@ if __name__ == "__main__":
     test_tool_safety()
     test_api_auth()
     test_couple_prefetch()
+    test_int4_packing()
     print("\n🎉 全部核心测试通过!")

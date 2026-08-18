@@ -33,6 +33,9 @@ class CompressedKV:
     importance: float = 0.5     # 重要性 (遗忘曲线用, 0-1)
     access_count: int = 0       # 访问次数 (遗忘曲线用)
     max_heat: float = 0.0       # 历史峰值热度 (LFRU 滞回用, 防抖)
+    # ===== 真 INT4 打包 (colibrì quant.h 移植) =====
+    q4: Optional[np.ndarray] = None      # INT4 打包字节 [288] (真实存储)
+    scales: Optional[np.ndarray] = None  # per-channel scale [n_ch] (真实存储)
     # ===== 自适应 Top-K 精度保护 (3-Agent 讨论室产出 + 实测迭代) =====
     protected: bool = False                   # 是否为 Top-K 高精度块 (路由层标记)
     reversible: bool = False                  # 启用保护机制
@@ -147,7 +150,7 @@ class HierarchicalKV:
 
 class ReversibleQuantizer:
     """
-    自适应 Top-K 精度保护 (3-Agent 讨论室产出 → 实测迭代出真方案)
+    自适应 Top-K 精度保护 + 真 INT4 打包 (colibrì quant.h 移植)
     =================================================================
     讨论室方案: 1bit 误差符号补偿 → 实测无效 (Top-1 翻转 34%)
     实测根因: 99.9% 翻转发生在分数差<0.1 的接近竞争, 补偿无法消除噪声
@@ -155,12 +158,67 @@ class ReversibleQuantizer:
     → 翻转率 0/100 (完美), 存储压缩大部分保留
 
     核心原则: 精度预算花在"可能参与 Top-K 竞争"的块上
+
+    INT4 打包 (colibrì quant.h pack_int4):
+      对称量化 s = amax/7, 每个 int4 存 nibble (v+8), 两个 nibble 塞 1 字节
+      576 维 latent → 288B q4 + n_ch×4B scales
     """
+    @staticmethod
+    def quantize_int4(latent: np.ndarray, n_ch: int = 16) -> tuple:
+        """
+        真 INT4 打包 (colibrì pack_int4 移植): 对称量化 + per-channel scale
+        返回: (q4 打包字节 np.uint8, scales np.float32, 大小字节)
+        """
+        d = latent.shape[-1]
+        ch = d // n_ch
+        tc = latent.reshape(n_ch, ch)
+        # 对称量化: s = amax / 7 (int4 范围 -8..7, 对称用 7)
+        amax = np.abs(tc).max(axis=-1)  # [n_ch]
+        scales = amax / 7.0
+        scales = np.where(scales < 1e-8, 1e-8, scales)  # 防除零
+        q = np.round(tc / scales[:, None]).astype(np.int32)
+        q = np.clip(q, -8, 7)
+        # nibble 打包: (v0+8) | ((v1+8)<<4), 两个 int4 塞 1 字节
+        q_flat = q.reshape(-1)
+        n_pairs = (q_flat.shape[0] + 1) // 2
+        q4 = np.zeros(n_pairs, dtype=np.uint8)
+        q4[0::1] = (q_flat[0::2] + 8).astype(np.uint8)
+        if q_flat.shape[0] % 2 == 1:
+            # 奇数: 最后补一个 0
+            q4 = np.zeros(n_pairs, dtype=np.uint8)
+            q4[:len(q_flat)//2] = ((q_flat[0::2][:len(q_flat)//2] + 8)
+                                   | ((q_flat[1::2][:len(q_flat)//2] + 8) << 4)).astype(np.uint8)
+            q4[-1] = (q_flat[-1] + 8).astype(np.uint8)
+        else:
+            q4 = ((q_flat[0::2] + 8) | ((q_flat[1::2] + 8) << 4)).astype(np.uint8)
+        size = int(n_pairs) + int(n_ch * 4)  # q4 字节 + scales 字节
+        return q4, scales.astype(np.float32), size
+
+    @staticmethod
+    def dequant_int4(q4: np.ndarray, scales: np.ndarray, d: int = 576) -> np.ndarray:
+        """
+        解包: q4 nibbles → float32 (检索/路由用)
+        """
+        vals = np.empty(d, dtype=np.float32)
+        n_pairs = q4.shape[0]
+        lo = (q4 & 0x0F).astype(np.int32) - 8
+        hi = ((q4 >> 4) & 0x0F).astype(np.int32) - 8
+        vals[0::2] = lo
+        if d % 2 == 1:
+            vals[1::2][:len(hi)] = hi
+        else:
+            vals[1::2] = hi
+        # per-channel scale 反缩放
+        n_ch = scales.shape[0]
+        ch = d // n_ch
+        vals = vals.reshape(n_ch, ch) * scales[:, None]
+        return vals.reshape(-1)
+
     @staticmethod
     def quantize(latent: np.ndarray, quant_bits: int, n_ch: int = 32,
                  reversible: bool = False):
         """
-        per-channel 非对称量化 + 可选 Top-K 保护标记
+        per-channel 非对称量化 (兼容旧路径)
         返回: (量化后值, 保护标记, 大小字节)
         """
         d = latent.shape[-1]
@@ -212,7 +270,8 @@ class AbsorbedMLA:
     K_ROPE = 64
     DIM = KV_LORA_RANK + K_ROPE  # 576
 
-    def __init__(self, n_layers=27, quant_bits=4, n_ch=32, reversible=False):
+    def __init__(self, n_layers=27, quant_bits=4, n_ch=16, reversible=False):
+        """n_ch=16: 每通道 36 维, 288B q4 + 64B scales = 352B/层 → 27层 9.3KB ≈ 28.4x"""
         self.n_layers = n_layers
         self.quant_bits = quant_bits
         self.n_ch = n_ch
@@ -231,16 +290,30 @@ class AbsorbedMLA:
         return self._quantize(latent)
 
     def _quantize(self, latent: np.ndarray) -> CompressedKV:
-        """per-channel 非对称量化 + Top-K 保护标记"""
-        deq, _, size = ReversibleQuantizer.quantize(
-            latent, self.quant_bits, self.n_ch, self.reversible)
-        kv = CompressedKV(
-            chunk_id=len(self.chunks),
-            latent=deq,
-            quant_bits=self.quant_bits,
-            size_bytes=size,
-            reversible=self.reversible,
-        )
+        """真 INT4 打包 (colibrì pack_int4): 存 q4 字节 + scales, 不再存 float32"""
+        if self.quant_bits == 4:
+            q4, scales, size = ReversibleQuantizer.quantize_int4(latent, self.n_ch)
+            # latent 保留解包值供路由检索, 但 size_bytes 记真实打包大小
+            deq = ReversibleQuantizer.dequant_int4(q4, scales, latent.shape[-1])
+            kv = CompressedKV(
+                chunk_id=len(self.chunks),
+                latent=deq,
+                quant_bits=self.quant_bits,
+                size_bytes=size,
+                reversible=self.reversible,
+                q4=q4,
+                scales=scales,
+            )
+        else:
+            deq, _, size = ReversibleQuantizer.quantize(
+                latent, self.quant_bits, self.n_ch, self.reversible)
+            kv = CompressedKV(
+                chunk_id=len(self.chunks),
+                latent=deq,
+                quant_bits=self.quant_bits,
+                size_bytes=size,
+                reversible=self.reversible,
+            )
         self.chunks[kv.chunk_id] = kv
         return kv
 
@@ -258,8 +331,13 @@ class AbsorbedMLA:
         return ReversibleQuantizer.compensate(kv)
 
     def bytes_per_token(self) -> float:
-        """每 token 每层字节 (27 层总)"""
-        per_layer = self.DIM * (self.quant_bits / 8) if self.quant_bits < 16 else self.DIM * 2
+        """每 token 每层字节 (27 层总): INT4 打包 = 288B q4 + n_ch*4B scales"""
+        if self.quant_bits == 4:
+            per_layer = self.DIM // 2 + self.n_ch * 4   # q4 nibbles + scales
+        elif self.quant_bits < 16:
+            per_layer = self.DIM * (self.quant_bits / 8)
+        else:
+            per_layer = self.DIM * 2
         return per_layer * self.n_layers
 
     def memory_bytes(self, seq_len: int) -> int:

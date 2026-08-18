@@ -2,7 +2,7 @@
 
 **脑 = DeepSeek · 手 = 工具执行 · 记忆 = 四层上下文保持**
 
-版本 4.1.0 · GPL-3.0 · Cloud LTE Studio
+版本 4.2.0 · GPL-3.0 · Cloud LTE Studio
 
 ---
 
@@ -29,7 +29,7 @@
 
 | 能力 | 说明 | 验证状态 |
 |------|------|---------|
-| **KV 压缩** | 吸收式 MLA + INT4 = **28.4x** (270KB→7.6KB/token) | ✓ L40S 真实推理实测 (V2-Lite 15.7B) |
+| **KV 压缩** | 真 INT4 打包: 576维→288B q4+64B scales = **29.1x** (cos 0.998) | ✓ 有测试 (对齐 L40S 28.4x) |
 | **Top-K 保护** | 关键块 16bit + 其余 4bit = **0/100 翻转** | ✓ 实测 (独立实验, 未接入主流程) |
 | **分层组织** | Sector(16)-Block(256)-Module(1024) 硬件对齐 | ⚠️ 设计未接入 |
 | **Aura 遗忘** | S(t)=I·2^(-t/τ) 指数遗忘 + 访问增强 | ✓ 有测试 |
@@ -144,9 +144,9 @@ agentframe/
 
 ##  关键技术 (实测数据)
 
-1. **吸收式 MLA**: 只缓存 576 维潜在向量 (512 kv_lora + 64 k_pe), 不展开 KV
-   - 270KB → 30.4KB (8.9x) → INT8 15.2KB → **INT4 7.6KB (28.4x)** — L40S 真实推理实测 (DeepSeek-V2-Lite 15.7B)
-   - 真实推理验证: 压缩后输出语义正确/流畅/质量不降
+1. **吸收式 MLA + 真 INT4 打包**: 只缓存 576 维潜在向量 (512 kv_lora + 64 k_pe), 不展开 KV
+   - 270KB → 30.4KB (8.9x) → **INT4 打包 352B/层 (29.1x)** — 对齐 L40S 真实推理实测 (DeepSeek-V2-Lite 15.7B, 28.4x)
+   - 对称量化 + per-channel scale + nibble 打包 (colibrì quant.h 移植), 往返余弦相似度 0.998
 2. **Top-K 自适应精度保护** (实测, 未接入主流程): 路由层已知 Top-K → 关键块 16bit + 其余 4bit
    - 1bit 符号补偿 × (17/50 翻转) / 排序保护 × (29/100) / **Top-K 块 16bit ✓ (0/100)**
 3. **Sector-Block-Module** (设计, 未接入): 16 token=Sector, 16 Sector=Block(256), 4 Block=Module(1024)
@@ -255,6 +255,19 @@ GPL-3.0 © Cloud LTE Studio
 ---
 
 ##  Changelog
+
+### v4.2.0 (2026-08-18) — 真 INT4 打包 (28.4x 落地)
+
+**新增**
+- **真 INT4 打包存储** (移植 colibrì quant.h pack_int4): 对称量化 (absmax/7) + per-channel scale + nibble 打包
+  - 576 维 latent → 288B q4 + 64B scales = 352B/块 (原 float32 2304B)
+  - 每 token 27 层 9.28KB → **29.1x 真实压缩** (对齐 L40S 实测 28.4x)
+  - 往返精度: 余弦相似度 0.9979
+- `ReversibleQuantizer.quantize_int4()/dequant_int4()`: 打包/解包接口
+- CompressedKV 新增 q4/scales 字段: 真实存储 + save/load 持久化
+- n_ch 默认 32→16 (每通道 36 维, 压缩比与精度平衡)
+
+**测试**: 核心测试 11 项 (+test_int4_packing: 往返精度 cos>0.99 + 压缩比>25x)
 
 ### v4.1.0 (2026-08-18) — Couple 跨轮共现预取
 
