@@ -290,14 +290,17 @@ class AbsorbedMLA:
         return self._quantize(latent)
 
     def _quantize(self, latent: np.ndarray) -> CompressedKV:
-        """真 INT4 打包 (colibrì pack_int4): 存 q4 字节 + scales, 不再存 float32"""
+        """
+        混合精度存储 (colibrì Top-K 保护):
+          - latent: 存原始 float32 (无损) → 路由摘要/检索精度不受量化影响
+          - q4/scales: 真 INT4 打包 (持久化压缩 29.1x 保持)
+          - protected 块: 16bit 高精度路径 (size_bytes = 1152B), 其余 4bit (352B)
+        """
         if self.quant_bits == 4:
             q4, scales, size = ReversibleQuantizer.quantize_int4(latent, self.n_ch)
-            # latent 保留解包值供路由检索, 但 size_bytes 记真实打包大小
-            deq = ReversibleQuantizer.dequant_int4(q4, scales, latent.shape[-1])
             kv = CompressedKV(
                 chunk_id=len(self.chunks),
-                latent=deq,
+                latent=latent.astype(np.float32),   # 原始无损值 (检索用)
                 quant_bits=self.quant_bits,
                 size_bytes=size,
                 reversible=self.reversible,
@@ -317,11 +320,28 @@ class AbsorbedMLA:
         self.chunks[kv.chunk_id] = kv
         return kv
 
-    def protect_topk(self, chunk_id: int):
-        """路由层调用: 标记 Top-K 块为高精度保护"""
+    def dequant(self, chunk_id: int) -> np.ndarray:
+        """从 INT4 打包解包 (模拟 4bit 低精度路径, 验证/对比用)"""
         kv = self.chunks.get(chunk_id)
-        if kv:
-            ReversibleQuantizer.protect_topk(kv, True)
+        if kv is None or kv.q4 is None:
+            return None
+        return ReversibleQuantizer.dequant_int4(kv.q4, kv.scales, self.DIM)
+
+    def protect_topk(self, chunk_id: int):
+        """
+        路由层调用: 标记 Top-K 块为高精度保护 (colibrì #441 思想).
+        受保护块走 16bit 路径 (原始 latent, size 1152B), 其余走 INT4 (352B).
+        """
+        kv = self.chunks.get(chunk_id)
+        if kv and not kv.protected:
+            kv.protected = True
+            kv.quant_bits = 16
+            kv.size_bytes = self.DIM * 2  # 16bit 高精度存储
+            if kv.q4 is not None:
+                # 保留 q4 供降级用, 但主路径走原始 latent
+                pass
+            return True
+        return False
 
     def rollback_compensate(self, chunk_id: int) -> np.ndarray:
         """回滚补偿: 受保护块走高精度路径"""
@@ -339,6 +359,18 @@ class AbsorbedMLA:
         else:
             per_layer = self.DIM * 2
         return per_layer * self.n_layers
+
+    def storage_stats(self) -> dict:
+        """混合精度统计: protected (16bit) vs 普通 (4bit)"""
+        n_protected = sum(1 for kv in self.chunks.values() if kv.protected)
+        n_total = len(self.chunks)
+        if n_total == 0:
+            return {"total": 0, "protected": 0, "protected_pct": 0.0}
+        return {
+            "total": n_total,
+            "protected": n_protected,
+            "protected_pct": round(n_protected / n_total * 100, 1),
+        }
 
     def memory_bytes(self, seq_len: int) -> int:
         """N 层总占用 (bytes_per_token 已含层数, 不再重复乘)"""

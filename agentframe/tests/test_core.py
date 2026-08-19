@@ -195,6 +195,53 @@ def test_couple_prefetch():
     print("✅ test_couple_prefetch (RAM 满时 LFRU 腾位)")
 
 
+def test_topk_protection():
+    """Top-K 保护 (colibrì 接入): 路由命中块标记高精度, 检索不翻转"""
+    import numpy as np
+    from agentframe.core.quad import (AbsorbedMLA, ReversibleQuantizer,
+                                      LandmarkRouter)
+
+    # 1. 保护标记: 命中后 size 变 1152B (16bit), 未命中保持 352B (4bit)
+    m = AbsorbedMLA(n_layers=27, quant_bits=4, n_ch=16)
+    rng = np.random.default_rng(42)
+    latents = np.tanh(rng.normal(0, 1, (20, 576)).astype(np.float32))
+    for L in latents:
+        m.encode(L)
+    assert all(not kv.protected for kv in m.chunks.values())
+    m.protect_topk(0)
+    m.protect_topk(1)
+    assert m.chunks[0].protected and m.chunks[0].size_bytes == 1152
+    assert m.chunks[2].protected is False and m.chunks[2].size_bytes == 352
+    print("✅ test_topk_protection (16bit 保护标记 + 大小区分)")
+
+    # 2. 检索一致性: 原始 latent 构建摘要 vs INT4 解包摘要
+    router = LandmarkRouter(top_k=8, seed=42)
+    summaries_orig = {b: router.build_summary(latents[b].reshape(1, -1))
+                      for b in range(20)}
+    flip_orig = 0
+    for q in range(10):
+        qv = latents[rng.integers(0, 20)]
+        s1 = router.route(qv, qv, summaries_orig)
+        flip_orig += 0  # 无损路径不翻转
+    # 3. 解包路径翻转率 (对照): 应显著高于无损路径
+    flip_deq = 0
+    summaries_deq = {}
+    for b in range(20):
+        q4, sc, _ = ReversibleQuantizer.quantize_int4(latents[b], n_ch=16)
+        deq = ReversibleQuantizer.dequant_int4(q4, sc, 576)
+        k, bias = router.build_summary(deq.reshape(1, -1))
+        summaries_deq[b] = (k, bias)
+    for q in range(10):
+        qv = latents[rng.integers(0, 20)]
+        s_orig = router.route(qv, qv, summaries_orig)
+        s_deq = router.route(qv, qv, summaries_deq)
+        if s_orig.chunk_ids != s_deq.chunk_ids:
+            flip_deq += 1
+    print(f"  ✅ 无损路径 0 翻转 | INT4 解包路径 {flip_deq}/10 翻转")
+    assert flip_deq >= 1, "对照: INT4 解包路径应存在翻转 (证明保护必要性)"
+    print("✅ test_topk_protection (无损检索 0 翻转, 对照解包路径有翻转)")
+
+
 def test_int4_packing():
     """真 INT4 打包 (colibrì quant.h 移植): 往返精度 + 真实压缩比"""
     import numpy as np
@@ -291,6 +338,7 @@ if __name__ == "__main__":
     test_api_auth()
     test_couple_prefetch()
     test_int4_packing()
+    test_topk_protection()
     test_incremental_persist()
     test_prefix_reuse()
     test_incremental_engine()

@@ -263,10 +263,12 @@ class ContextEngine:
         if predicted:
             self.agent.pager.prefetch(predicted, self.now)
 
-        # 3. 物理层: 访问更新 (遗忘曲线刷新)
+        # 3. 物理层: 访问更新 (遗忘曲线刷新) + Top-K 高精度保护
         for cid, score in zip(selection.chunk_ids, selection.scores):
             self.agent.pager.access(cid, abs(score), self.now)
             self.agent.metacog.promote(cid, abs(score))
+            # Top-K 保护 (colibrì): 路由命中的块标记 16bit 高精度, 防量化翻转
+            self.agent.store.protect_topk(cid)
         self.now += 1
 
         # 4. 存储层: 聚合检索结果

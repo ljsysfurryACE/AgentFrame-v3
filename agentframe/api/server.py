@@ -107,7 +107,7 @@ class AgentFrameAPI:
 
         @app.get("/health")
         def health():
-            return jsonify({"status": "ok", "version": "4.3.0",
+            return jsonify({"status": "ok", "version": "4.4.0",
                             "sessions": len(self.sessions),
                             "system": "AgentFrame Context API"})
 
@@ -257,7 +257,7 @@ def main():
     config = AgentFrameConfig.from_env()
     port = int(sys.argv[1]) if len(sys.argv) > 1 else config.api.port
     api = AgentFrameAPI(config)
-    print(f"🚀 AgentFrame API v4.3.0")
+    print(f"🚀 AgentFrame API v4.4.0")
     print(f"   四层上下文保持: 认知×路由×存储×物理")
     print(f"   会话: POST /v1/sessions | 摄入: /ingest | 查询: /ask")
     print(f"   监听: {config.api.host}:{port}")

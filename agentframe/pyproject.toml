@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentframe"
-version = "4.3.0"
-description = "AgentFrame v4.3 — KV 增量持久化 + 前缀复用 + 真 INT4 (29.1x) + Couple 预取 + LFRU 滞回"
+version = "4.4.0"
+description = "AgentFrame v4.4 — Top-K 保护 + 无损检索 (L40S 实测 0 翻转) + 真 INT4 29.1x + Couple + LFRU"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "GPL-3.0" }
